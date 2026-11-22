@@ -19,10 +19,14 @@ A human history simulator starting around 10,000 BCE on Earth's real terrain. Th
 ## Code layout
 
 - `crates/history`: event log.
-- `crates/sim`: simulation core, time (`time.rs`; one tick = one month; astronomical year numbering internally, BCE/CE only for display).
+- `crates/sim`: simulation core, time (`time.rs`; one tick = one day; proleptic Gregorian calendar; astronomical year numbering internally, BCE/CE only for display). Systems run at their own cadence (daily, seasonal, yearly), not all every day.
 - `crates/server`: the `sim3` binary. Runs the simulation on a background thread and serves the viewer on 127.0.0.1:7340.
 - `viewer/`: plain HTML/CSS/JS, embedded into the binary at compile time.
 - New systems (world, climate, ...) get their own crate under `crates/`.
+
+## Releases
+
+Pushing to `main` with a new `version` under `[workspace.package]` in `Cargo.toml` makes GitHub build `sim3.exe` and publish it as release `v<version>`. Bump the version whenever a change should reach the owner as a download. Tags cannot be pushed from Claude's workspace, so don't rely on them.
 
 ## Checks before proposing a push
 

@@ -86,4 +86,4 @@ Every event goes into a structured log with its causes. Browse people, places, o
 4. **Run style.** Live, with pause and inspect, and browsing of everything that has already happened.
 5. **Repo.** github.com/djeyprott/sim3, commits straight to `main` after approval. License GPL-3.0-or-later.
 6. **Platform.** The owner runs Windows; releases ship a ready-made `sim3.exe`.
-7. **Time step (provisional).** One tick is one month. Revisit in Phase 1 if climate or demography need a different step.
+7. **Time step.** One tick is one day, labelled with the proleptic Gregorian calendar. Each system runs at the cadence it needs: daily for weather and people's actions, seasonally or yearly for slow processes such as demography, harvests, ice sheets and sea level.

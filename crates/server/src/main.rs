@@ -13,18 +13,23 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use sim::time::Date;
 use sim::Simulation;
 
 const DEFAULT_PORT: u16 = 7340;
 
-/// Playback speeds offered in the viewer, in simulated months per real
-/// second. 0 means "as fast as the computer can go".
-const SPEEDS: [u32; 5] = [1, 12, 120, 1200, 0];
+/// Playback speeds offered in the viewer, in simulated days per real
+/// second: a day, a month, a year, a decade and a century per second.
+/// 0 means "as fast as the computer can go".
+const SPEEDS: [u32; 6] = [1, 30, 365, 3_652, 36_524, 0];
+
+/// Largest single step the viewer can request in days: 100 years.
+const MAX_STEP_DAYS: u64 = 36_525;
 
 struct Control {
     paused: bool,
-    months_per_second: u32,
-    pending_steps: u32,
+    days_per_second: u32,
+    pending_steps: u64,
 }
 
 struct Shared {
@@ -38,11 +43,11 @@ fn run_simulation(shared: AppState) {
     let mut budget = 0.0_f64;
     let mut last = Instant::now();
     loop {
-        let (paused, mps, steps) = {
+        let (paused, dps, steps) = {
             let mut c = shared.control.lock().unwrap();
             let s = c.pending_steps;
             c.pending_steps = 0;
-            (c.paused, c.months_per_second, s)
+            (c.paused, c.days_per_second, s)
         };
         let now = Instant::now();
         let elapsed = now.duration_since(last).as_secs_f64();
@@ -61,7 +66,7 @@ fn run_simulation(shared: AppState) {
             continue;
         }
 
-        if mps == 0 {
+        if dps == 0 {
             // Flat out: hold the lock in short slices so the viewer can still read.
             let slice_end = Instant::now() + Duration::from_millis(10);
             let mut sim = shared.sim.lock().unwrap();
@@ -71,9 +76,9 @@ fn run_simulation(shared: AppState) {
             drop(sim);
             thread::yield_now();
         } else {
-            budget += elapsed * mps as f64;
+            budget += elapsed * dps as f64;
             // Never try to catch up more than one second's worth at once.
-            budget = budget.min(mps as f64);
+            budget = budget.min(dps as f64);
             let due = budget.floor() as u32;
             if due > 0 {
                 budget -= due as f64;
@@ -90,29 +95,31 @@ fn run_simulation(shared: AppState) {
 #[derive(Serialize)]
 struct StateResponse {
     tick: u64,
-    date: sim::time::Date,
+    date: Date,
+    years_elapsed: i64,
     date_label: String,
     year_label: String,
     paused: bool,
-    months_per_second: u32,
+    days_per_second: u32,
     speeds: &'static [u32],
     event_count: usize,
 }
 
 async fn get_state(State(shared): State<AppState>) -> Json<StateResponse> {
-    let (paused, mps) = {
+    let (paused, dps) = {
         let c = shared.control.lock().unwrap();
-        (c.paused, c.months_per_second)
+        (c.paused, c.days_per_second)
     };
     let sim = shared.sim.lock().unwrap();
     let date = sim.date();
     Json(StateResponse {
         tick: sim.tick(),
         date,
+        years_elapsed: date.years_since_start(),
         date_label: date.label(),
         year_label: date.year_label(),
         paused,
-        months_per_second: mps,
+        days_per_second: dps,
         speeds: &SPEEDS,
         event_count: sim.log.len(),
     })
@@ -123,26 +130,49 @@ async fn get_state(State(shared): State<AppState>) -> Json<StateResponse> {
 enum ControlRequest {
     Pause,
     Resume,
-    Step { months: Option<u32> },
-    Speed { months_per_second: u32 },
+    /// Advance by `count` calendar days, months or years.
+    Step {
+        unit: StepUnit,
+        count: Option<u32>,
+    },
+    Speed {
+        days_per_second: u32,
+    },
+}
+
+#[derive(Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum StepUnit {
+    Day,
+    Month,
+    Year,
 }
 
 async fn post_control(
     State(shared): State<AppState>,
     Json(req): Json<ControlRequest>,
 ) -> impl IntoResponse {
+    let current_tick = shared.sim.lock().unwrap().tick();
     let mut c = shared.control.lock().unwrap();
     match req {
         ControlRequest::Pause => c.paused = true,
         ControlRequest::Resume => c.paused = false,
-        ControlRequest::Step { months } => {
-            c.pending_steps = c
-                .pending_steps
-                .saturating_add(months.unwrap_or(1).min(1200))
+        ControlRequest::Step { unit, count } => {
+            // Clamp the request to at most 100 years, in its own unit, so the
+            // step still lands on a matching calendar date.
+            let count = count.unwrap_or(1);
+            let from_tick = current_tick + c.pending_steps;
+            let from = Date::from_tick(from_tick);
+            let to = match unit {
+                StepUnit::Day => from_tick + (count as u64).min(MAX_STEP_DAYS),
+                StepUnit::Month => from.add_months(count.min(1_200)).to_tick(),
+                StepUnit::Year => from.add_years(count.min(100)).to_tick(),
+            };
+            c.pending_steps += to - from_tick;
         }
-        ControlRequest::Speed { months_per_second } => {
-            if SPEEDS.contains(&months_per_second) {
-                c.months_per_second = months_per_second;
+        ControlRequest::Speed { days_per_second } => {
+            if SPEEDS.contains(&days_per_second) {
+                c.days_per_second = days_per_second;
             }
         }
     }
@@ -172,7 +202,7 @@ async fn get_events(
         .from_id(q.from.unwrap_or(0), q.limit.unwrap_or(200).min(1000))
         .iter()
         .map(|e| EventView {
-            date_label: sim::time::Date::from_tick(e.tick).label(),
+            date_label: Date::from_tick(e.tick).label(),
             event: e.clone(),
         })
         .collect();
@@ -236,7 +266,7 @@ async fn main() {
         sim: Mutex::new(Simulation::new()),
         control: Mutex::new(Control {
             paused: true,
-            months_per_second: 12,
+            days_per_second: 365,
             pending_steps: 0,
         }),
     });

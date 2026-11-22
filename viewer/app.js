@@ -4,11 +4,13 @@ const $ = (id) => document.getElementById(id);
 let state = null;
 let nextEventId = 0;
 
+// Simulated days per real second.
 const SPEED_NAMES = {
-  1: "1 month / sec",
-  12: "1 year / sec",
-  120: "10 years / sec",
-  1200: "100 years / sec",
+  1: "1 day / sec",
+  30: "1 month / sec",
+  365: "1 year / sec",
+  3652: "10 years / sec",
+  36524: "100 years / sec",
   0: "Maximum",
 };
 
@@ -30,8 +32,8 @@ function render() {
   if (!state) return;
   $("year").textContent = state.year_label;
   $("date").textContent = state.date_label;
-  const years = Math.floor(state.tick / 12);
-  $("elapsed").textContent = `${years.toLocaleString()} years simulated`;
+  const years = state.years_elapsed;
+  $("elapsed").textContent = `${years.toLocaleString()} ${years === 1 ? "year" : "years"} simulated`;
   $("toggle").textContent = state.paused ? "Play" : "Pause";
 
   const select = $("speed");
@@ -39,11 +41,11 @@ function render() {
     for (const s of state.speeds) {
       const opt = document.createElement("option");
       opt.value = s;
-      opt.textContent = SPEED_NAMES[s] ?? `${s} months / sec`;
+      opt.textContent = SPEED_NAMES[s] ?? `${s} days / sec`;
       select.appendChild(opt);
     }
   }
-  if (document.activeElement !== select) select.value = state.months_per_second;
+  if (document.activeElement !== select) select.value = state.days_per_second;
 }
 
 async function poll() {
@@ -76,16 +78,14 @@ $("toggle").addEventListener("click", async () => {
   await api("/api/control", { action: state?.paused ? "resume" : "pause" });
   poll();
 });
-$("step").addEventListener("click", async () => {
-  await api("/api/control", { action: "step", months: 1 });
-  setTimeout(poll, 60);
-});
-$("step-year").addEventListener("click", async () => {
-  await api("/api/control", { action: "step", months: 12 });
-  setTimeout(poll, 60);
-});
+for (const unit of ["day", "month", "year"]) {
+  $(`step-${unit}`).addEventListener("click", async () => {
+    await api("/api/control", { action: "step", unit, count: 1 });
+    setTimeout(poll, 60);
+  });
+}
 $("speed").addEventListener("change", async (ev) => {
-  await api("/api/control", { action: "speed", months_per_second: Number(ev.target.value) });
+  await api("/api/control", { action: "speed", days_per_second: Number(ev.target.value) });
   poll();
 });
 

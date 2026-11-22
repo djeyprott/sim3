@@ -35,7 +35,12 @@ impl Simulation {
         Date::from_tick(self.tick)
     }
 
-    /// Advances the world by one month.
+    /// Advances the world by one day.
+    ///
+    /// Systems run at the cadence they need, not all every day: fast ones
+    /// (weather, people's actions) daily, slow ones (births and deaths,
+    /// harvests, ice sheets, sea level) on the first day of a season or
+    /// year, using the calendar date to decide.
     pub fn step(&mut self) {
         self.tick += 1;
     }
@@ -53,9 +58,9 @@ mod tests {
     }
 
     #[test]
-    fn a_year_is_twelve_steps() {
+    fn the_first_year_is_365_steps() {
         let mut sim = Simulation::new();
-        for _ in 0..12 {
+        for _ in 0..365 {
             sim.step();
         }
         assert_eq!(sim.date().year_label(), "9999 BCE");
