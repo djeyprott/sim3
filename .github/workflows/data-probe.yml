@@ -1,0 +1,42 @@
+name: Data probe
+
+# Temporary: checks that the raw datasets can be downloaded from GitHub's
+# machines and lists what the ICE-6G files contain. Removed once the real
+# data workflow exists.
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/data-probe.yml"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ETOPO 2022 (60 arc-second GeoTIFF, headers only)
+        run: |
+          for f in 60s_surface_elev_gtif/ETOPO_2022_v1_60s_N90W180_surface.tif 60s_bed_elev_gtif/ETOPO_2022_v1_60s_N90W180_bed.tif; do
+            curl -sIL "https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/data/60s/$f" | grep -iE "^(HTTP|content-length|content-type)"
+          done
+      - name: ICE-6G_C (PMIP4 sharebox)
+        run: |
+          pip install --quiet netCDF4
+          for t in 0 11.5 12; do
+            url="https://sharebox.lsce.ipsl.fr/index.php/s/1RSwVf7afj38cmG/download?path=%2F&files=I6_C.VM5a_10min.$t.nc"
+            curl -sL -o "ice_$t.nc" -w "$t: HTTP %{http_code}, %{size_download} bytes, %{content_type}\n" "$url"
+            md5sum "ice_$t.nc"
+          done
+          python - <<'EOF'
+          import netCDF4
+          for t in ["0", "11.5", "12"]:
+              try:
+                  ds = netCDF4.Dataset(f"ice_{t}.nc")
+              except Exception as e:
+                  print(t, "not netCDF:", e)
+                  print(open(f"ice_{t}.nc", "rb").read(300))
+                  continue
+              print(f"== {t} ka ==")
+              for name, v in ds.variables.items():
+                  attrs = {k: v.getncattr(k) for k in v.ncattrs()}
+                  print(name, v.dimensions, v.shape, attrs)
+          EOF
