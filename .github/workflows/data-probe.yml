@@ -1,8 +1,7 @@
 name: Data probe
 
-# Temporary: checks that the raw datasets can be downloaded from GitHub's
-# machines and lists what the ICE-6G files contain. Removed once the real
-# data workflow exists.
+# Temporary: checks which raw datasets can be downloaded from GitHub's
+# machines. Removed once the real data workflow exists.
 on:
   push:
     branches: [main]
@@ -13,25 +12,16 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: ETOPO 2022 (60 arc-second GeoTIFF, headers only)
+      - name: Look for ICE-6G_C ice thickness
         run: |
-          for f in 60s_surface_elev_gtif/ETOPO_2022_v1_60s_N90W180_surface.tif 60s_bed_elev_gtif/ETOPO_2022_v1_60s_N90W180_bed.tif; do
-            curl -sIL "https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/data/60s/$f" | grep -iE "^(HTTP|content-length|content-type)"
-          done
-      - name: ICE-6G_C 1-degree files with ice thickness (candidate URLs)
-        run: |
-          pip install --quiet netCDF4
-          base=https://www.atmosp.physics.utoronto.ca/~peltier/datasets
+          set +e
           for u in \
-            "$base/Ice6G_C_VM5a/I6_C.VM5a_1deg.12.nc" \
-            "$base/Ice6G_C_VM5a/I6_C.VM5a_1deg.12.0.nc" \
-            "$base/Ice6G_C_VM5a/IceThick.nc.gz" \
-            "$base/Ice6G_C_VM5a/" \
-            "$base/Ice6G_D_VM5a/IceThick.nc.gz" \
-            "$base/Ice6G_D_VM5a/" \
-            "$base/" \
-            "https://www.atmosp.physics.utoronto.ca/~peltier/data.php" ; do
-            curl -sL -o probe.bin -w "%{http_code} %{size_download} %{content_type} $u\n" "$u"
-            case "$u" in */) grep -oE 'href="[^"]+"' probe.bin | head -80 ;; esac
-            case "$u" in *data.php) grep -oE 'href="[^"]+"' probe.bin | grep -iE "nc|gz|ice|6G" | head -80 ;; esac
+            "http://www.atmosp.physics.utoronto.ca/~peltier/data.php" \
+            "https://www.atmosp.physics.utoronto.ca/~peltier/data.php" \
+            "https://sites.physics.utoronto.ca/peltier_wr/datasets/paleo-topography-data" \
+            "https://sites.physics.utoronto.ca/peltier_wr/datasets" ; do
+            curl -sL --max-time 60 -o probe.bin -w "%{http_code} %{size_download} %{content_type} $u\n" "$u"
+            grep -oE 'href="[^"]+"' probe.bin | grep -viE "\.(css|js|png|svg|ico)" | head -150
           done
+          echo "== PMIP4 sharebox listing =="
+          curl -s --max-time 60 -X PROPFIND -H "Depth: 1" -u "1RSwVf7afj38cmG:" https://sharebox.lsce.ipsl.fr/public.php/webdav/ | grep -oE "<d:href>[^<]+</d:href>|<d:getcontentlength>[^<]+" | head -150
