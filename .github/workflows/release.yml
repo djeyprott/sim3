@@ -1,10 +1,12 @@
 name: Release
 
-# Pushing a tag like v0.0.1 builds sim3.exe on Windows and publishes it
-# on the repo's Releases page.
+# On every push to main: if the workspace version in Cargo.toml has no
+# release yet, build sim3.exe on Windows and publish it as release v<version>.
+# To ship a new download, bump `version` under [workspace.package].
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,15 +14,32 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --bin sim3
-      - name: Publish release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Check whether this version is already released
+        id: version
         run: |
-          gh release create "${GITHUB_REF_NAME}" target/release/sim3.exe \
-            --title "${GITHUB_REF_NAME}" \
+          version=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+          if gh release view "v${version}" > /dev/null 2>&1; then
+            echo "v${version} is already released; nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.exists == 'false'
+        uses: dtolnay/rust-toolchain@stable
+      - if: steps.version.outputs.exists == 'false'
+        run: cargo build --release --bin sim3
+      - if: steps.version.outputs.exists == 'false'
+        name: Publish release
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" target/release/sim3.exe \
+            --target "${GITHUB_SHA}" \
+            --title "${{ steps.version.outputs.tag }}" \
             --notes "Download sim3.exe and double-click it. See the README for details."
