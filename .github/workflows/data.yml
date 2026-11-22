@@ -63,11 +63,23 @@ jobs:
           e742322517320d9ff61c5d9fca8e25b9  ice_12.nc
           EOF
       - if: steps.version.outputs.exists == 'false'
+        name: Download CHELSA temperatures, orbit table and CO2 records
+        run: |
+          base=https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/climatologies/1981-2010/tas
+          for m in 01 02 03 04 05 06 07 08 09 10 11 12; do
+            curl -fsSL --retry 3 -o "work/chelsa_tas_$m.tif" "$base/CHELSA_tas_${m}_1981-2010_V.2.1.tif"
+          done
+          curl -fsSL --retry 3 -o work/orbit91 https://www.ncei.noaa.gov/pub/data/paleo/climate_forcing/orbital_variations/insolation/orbit91
+          curl -fsSL --retry 3 -o work/co2_composite.txt https://www.ncei.noaa.gov/pub/data/paleo/icecore/antarctica/antarctica2015co2composite.txt
+          curl -fsSL --retry 3 -o work/co2_mlo.txt https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.txt
+          ls -la work
+      - if: steps.version.outputs.exists == 'false'
         name: Build the world data file
         run: |
           pip install --quiet numpy scipy rasterio netCDF4
           cd work
-          python ../tools/data/build_world.py grid.bin surface.tif bed.tif ice_0.nc ice_11.5.nc ice_12.nc world.bin report.json
+          python ../tools/data/build_world.py grid.bin surface.tif bed.tif ice_0.nc ice_11.5.nc ice_12.nc \
+            chelsa_tas_MM.tif orbit91 co2_composite.txt co2_mlo.txt world.bin report.json
           cp ../tools/data/CREDITS.txt .
           ls -la world.bin
       - if: steps.version.outputs.exists == 'false'

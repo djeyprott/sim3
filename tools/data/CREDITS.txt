@@ -16,6 +16,22 @@ Ice-age topography and ice extent
   sea level histories. Geophys. J. Int., 198, 537-563.
   Distributed by PMIP4: https://pmip4.lsce.ipsl.fr/doku.php/data:ice_ice6g_c
 
+Observed temperatures 1981-2010
+  Karger, D.N. et al. (2017). Climatologies at high resolution for the
+  earth's land surface areas. Scientific Data 4, 170122. CHELSA V2.1:
+  https://doi.org/10.16904/envidat.228.v2.1
+
+Earth's orbit
+  Berger, A. and Loutre, M.F. (1991). Insolation values for the climate of
+  the last 10 million years. Quaternary Science Reviews 10, 297-317.
+  Table via NOAA NCEI Paleoclimatology.
+
+CO2
+  Bereiter, B. et al. (2015). Revision of the EPICA Dome C CO2 record from
+  800 to 600 kyr before present. Geophys. Res. Lett. 42, 542-549
+  (Antarctic composite). NOAA NCEI Paleoclimatology.
+  Mauna Loa annual mean CO2: NOAA Global Monitoring Laboratory.
+
 Processing
   Aggregated onto sim3's geodesic grid by tools/data/build_world.py in
   https://github.com/djeyprott/sim3 (GPL-3.0-or-later). Ice thickness in

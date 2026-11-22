@@ -11,6 +11,13 @@ Inputs (downloaded by the workflow):
   ice_0.nc, ice_11.5.nc, ice_12.nc
                  ICE-6G_C (VM5a) 10 arc-minute topography and ice mask
                  (Peltier, Argus & Drummond 2015), via PMIP4
+  chelsa_tas_MM.tif (MM = 01..12)
+                 CHELSA V2.1 monthly mean near-surface air temperature,
+                 1981-2010, 30 arc-seconds (Karger et al. 2017; v2.1 2021)
+  orbit91        Berger & Loutre (1991) orbital parameters, 1 kyr steps
+  co2_composite.txt
+                 Antarctic ice-core CO2 composite (Bereiter et al. 2015)
+  co2_mlo.txt    Mauna Loa annual mean CO2 (NOAA GML)
 
 Method
 ------
@@ -60,8 +67,7 @@ OCEAN_AREA_M2 = 3.618e14  # present ocean area (Eakins & Sharman 2010, NOAA NGDC
 YEARS_BP = 11_950
 W_115 = (12_000 - YEARS_BP) / 500.0  # weight on the 11.5 ka slice
 
-FORMAT_VERSION = 1
-GRID_LEVEL = 8
+FORMAT_VERSION = 2
 CHUNK_ROWS = 270
 
 
@@ -107,7 +113,8 @@ def sample(interp, lat, lon):
     return interp(np.stack([lat, np.mod(lon, 360.0)], axis=-1))
 
 
-def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, out_path, report_path):
+def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, chelsa_pattern, orbit_path, co2_path, mlo_path,
+         out_path, report_path):
     lat_c, lon_c, area = load_grid(grid_path)
     n = lat_c.size
     print(f"{n} cells", flush=True)
@@ -200,7 +207,6 @@ def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, out_path, repor
         "land_share_then": float(np.sum(land_then) / np.sum(sum_w)),
         "max_ice_then_m": float(ice_then.max()),
     }
-    print(json.dumps(report, indent=2), flush=True)
 
     def i16(x):
         return np.clip(np.rint(x), -32768, 32767).astype("<i2")
@@ -213,7 +219,9 @@ def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, out_path, repor
 
     with open(out_path, "wb") as f:
         f.write(b"SIM3WRLD")
-        np.array([FORMAT_VERSION, GRID_LEVEL, n, 2], dtype="<u4").tofile(f)
+        grid_level = int(round(np.log((n - 2) / 10) / np.log(4)))  # cells = 10 * 4^level + 2
+        assert 10 * 4**grid_level + 2 == n
+        np.array([FORMAT_VERSION, grid_level, n, 2], dtype="<u4").tofile(f)
         for year, mean, lo, hi, land, ice in [
             (-9999, s_then, s_min + delta, s_max + delta, land_then, ice_then),
             (2022, s_now, s_min, s_max, land_now, ice_now),
@@ -224,8 +232,134 @@ def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, out_path, repor
             i16(hi).tofile(f)
             frac_u8(land).tofile(f)
             u16(ice).tofile(f)
+
+        obs_cells, obs_t = observed_temperature(chelsa_pattern, tree, n)
+        report["observed_temperature_cells"] = int(obs_cells.size)
+        section(f, b"OBST", [np.array([obs_cells.size], "<u4"), obs_cells.astype("<u4"),
+                             np.clip(np.rint(obs_t * 100), -32768, 32767).astype("<i2")])
+        co2 = read_co2(co2_path)
+        section(f, b"CO2 ", [np.array([len(co2)], "<u4"), np.array(co2, "<f4")])
+        co2_now = read_mlo_mean(mlo_path, 1981, 2010)
+        report["co2_1981_2010_ppm"] = co2_now
+        section(f, b"CO2P", [np.array([co2_now], "<f4")])
+        orbit = read_orbit(orbit_path)
+        section(f, b"ORBT", [np.array([len(orbit)], "<u4"), np.array(orbit, "<f4")])
+    print(json.dumps(report, indent=2), flush=True)
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
+
+
+def section(f, tag, arrays):
+    """A tagged block: 4-byte tag, u32 byte length, payload."""
+    payload = b"".join(a.tobytes() for a in arrays)
+    f.write(tag)
+    np.array([len(payload)], "<u4").tofile(f)
+    f.write(payload)
+
+
+def observed_temperature(pattern, tree, n):
+    """CHELSA 1981-2010 monthly mean temperature (deg C) averaged over each
+    map cell's land, for cells where CHELSA covers at least half the cell.
+
+    CHELSA is 30 arc-seconds; each 2x2 block of pixels is assigned to the
+    cell containing the block's centre (blocks are ~1.8 km, cells ~28 km).
+    """
+    sums = np.zeros((12, n))
+    wsum = np.zeros(n)
+    wall = np.zeros(n)
+    files = [rasterio.open(pattern.replace("MM", f"{m:02d}")) for m in range(1, 13)]
+    f0 = files[0]
+    t = f0.transform
+    scale, offset = f0.scales[0], f0.offsets[0]
+    rows, cols = f0.height, f0.width
+    rows -= rows % 2
+    block_lons = t.c + t.a * (np.arange(0, cols, 2) + 1.0)
+    step = 400  # full-resolution rows per chunk (even)
+    for r0 in range(0, rows, step):
+        nr = min(step, rows - r0)
+        block_lats = t.f + t.e * (np.arange(r0, r0 + nr, 2) + 1.0)
+        lat2 = np.repeat(block_lats, block_lons.size)
+        lon2 = np.tile(block_lons, block_lats.size)
+        _, bidx = tree.query(unit_vectors(lat2, lon2), workers=-1)
+        bidx = bidx.reshape(block_lats.size, block_lons.size)
+        idx = np.repeat(np.repeat(bidx, 2, axis=0), 2, axis=1)[:nr, :cols].ravel()
+        lat_px = np.repeat(t.f + t.e * (np.arange(r0, r0 + nr) + 0.5), cols)
+        w = np.cos(np.radians(lat_px))
+        wall += np.bincount(idx, w, n)
+        valid = None
+        for m, fm in enumerate(files):
+            raw = fm.read(1, window=Window(0, r0, cols, nr)).ravel()
+            ok = (raw > 0) & (raw < 65535)  # 0 and 65535 mark no data (sea)
+            if valid is None:
+                valid = ok
+                wsum += np.bincount(idx[ok], w[ok], n)
+            temp = raw[ok].astype(np.float64) * scale + offset
+            sums[m] += np.bincount(idx[ok], w[ok] * temp, n)
+        print(f"CHELSA rows {r0 + nr}/{rows}", flush=True)
+    for fm in files:
+        fm.close()
+    # Cells mostly covered by CHELSA; for cells partly outside its coverage
+    # (north of 84 N there is none), wall undercounts, which is fine.
+    keep = np.flatnonzero((wall > 0) & (wsum >= 0.5 * wall))
+    temps = (sums[:, keep] / wsum[keep]).T  # cells x 12
+    return keep, temps.ravel()
+
+
+def read_co2(path):
+    """(age in years before 1950, CO2 ppm) pairs for the last 15,000 years."""
+    rows = []
+    header = None
+    for line in open(path, encoding="utf-8-sig", errors="replace"):
+        if line.startswith("#") or not line.strip():
+            continue
+        parts = line.split()
+        if header is None:
+            header = [h.lower() for h in parts]
+            continue
+        try:
+            age = float(parts[header.index(next(h for h in header if h.startswith("age")))])
+            ppm = float(parts[header.index(next(h for h in header if h.startswith("co2") and "1s" not in h and "sigma" not in h))])
+        except (ValueError, StopIteration, IndexError):
+            continue
+        if age <= 15000:
+            rows.append((age, ppm))
+    rows.sort()
+    assert len(rows) > 50, f"CO2 record parse failed ({len(rows)} rows); header {header}"
+    return rows
+
+
+def read_mlo_mean(path, y0, y1):
+    vals = []
+    for line in open(path):
+        if line.startswith("#") or not line.strip():
+            continue
+        p = line.split()
+        if y0 <= int(float(p[0])) <= y1:
+            vals.append(float(p[1]))
+    assert len(vals) == y1 - y0 + 1, "Mauna Loa record incomplete"
+    return float(np.mean(vals))
+
+
+def read_orbit(path):
+    """(kyr relative to 1950, eccentricity, longitude of perihelion measured
+    from the northern spring equinox in degrees, obliquity in degrees) for
+    the last 15,000 years. The file's OMEGA is measured from the autumn
+    equinox, so 180 degrees are added (Berger 1978, appendix; as in climlab).
+    """
+    rows = []
+    for line in open(path):
+        p = line.split()
+        if len(p) < 4:
+            continue
+        try:
+            k, ecc, omega, obl = int(p[0]), float(p[1]), float(p[2]), float(p[3])
+        except ValueError:
+            continue
+        if -15 <= k <= 0:
+            rows.append((k, ecc, (omega + 180.0) % 360.0, obl))
+    rows.sort()
+    assert len(rows) == 16, f"orbit table parse failed: {rows}"
+    return rows
 
 
 if __name__ == "__main__":
