@@ -1,0 +1,81 @@
+name: World data
+
+# Builds the world data file from public datasets and publishes it as the
+# release `world-data-v<N>`, where N is in tools/data/VERSION. Bump VERSION
+# to publish a new data file; an existing version is never overwritten.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/data/**"
+      - "crates/world/src/grid.rs"
+      - "crates/world/src/bin/gridgen.rs"
+      - ".github/workflows/data.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check whether this data version is already published
+        id: version
+        run: |
+          tag="world-data-v$(tr -d '[:space:]' < tools/data/VERSION)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "$tag already exists; nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.exists == 'false'
+        uses: dtolnay/rust-toolchain@stable
+      - if: steps.version.outputs.exists == 'false'
+        name: Generate the map grid
+        run: |
+          cargo build --release -p world --bin gridgen
+          mkdir -p work
+          target/release/gridgen 8 work/grid.bin
+      - if: steps.version.outputs.exists == 'false'
+        name: Download ETOPO 2022 (60 arc-second)
+        run: |
+          base=https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/data/60s
+          curl -fsSL --retry 3 -o work/surface.tif "$base/60s_surface_elev_gtif/ETOPO_2022_v1_60s_N90W180_surface.tif"
+          curl -fsSL --retry 3 -o work/bed.tif "$base/60s_bed_elev_gtif/ETOPO_2022_v1_60s_N90W180_bed.tif"
+          ls -la work
+      - if: steps.version.outputs.exists == 'false'
+        name: Download ICE-6G_C slices (PMIP4) and verify checksums
+        run: |
+          share="https://sharebox.lsce.ipsl.fr/index.php/s/1RSwVf7afj38cmG/download?path=%2F&files="
+          for t in 0 11.5 12; do
+            curl -fsSL --retry 3 -o "work/ice_$t.nc" "${share}I6_C.VM5a_10min.$t.nc"
+          done
+          # Checksums published on the PMIP4 ICE-6G_C page.
+          cd work && md5sum -c - <<'EOF'
+          5ba8c0df48a12132238ffcbf675578e0  ice_0.nc
+          6d7161ac4ea2e712b6f9663e5fe21179  ice_11.5.nc
+          e742322517320d9ff61c5d9fca8e25b9  ice_12.nc
+          EOF
+      - if: steps.version.outputs.exists == 'false'
+        name: Build the world data file
+        run: |
+          pip install --quiet numpy scipy rasterio netCDF4
+          cd work
+          python ../tools/data/build_world.py grid.bin surface.tif bed.tif ice_0.nc ice_11.5.nc ice_12.nc world.bin report.json
+          cp ../tools/data/CREDITS.txt .
+          ls -la world.bin
+      - if: steps.version.outputs.exists == 'false'
+        name: Publish
+        run: |
+          cd work
+          gh release create "${{ steps.version.outputs.tag }}" world.bin report.json CREDITS.txt \
+            --target "${GITHUB_SHA}" \
+            --title "World data ${{ steps.version.outputs.tag }}" \
+            --notes "Terrain, sea and ice for sim3's map grid. Not a program download; sim3.exe already includes this. Sources in CREDITS.txt." \
+            --prerelease

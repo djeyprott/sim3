@@ -1,0 +1,23 @@
+sim3 world data: sources and credits
+
+Terrain today
+  NOAA National Centers for Environmental Information (2022). ETOPO 2022
+  15 Arc-Second Global Relief Model (used at 60 arc-seconds).
+  https://doi.org/10.25921/fd45-gt74
+
+Ice-age topography and ice extent
+  Peltier, W.R., Argus, D.F. and Drummond, R. (2015). Space geodesy
+  constrains ice age terminal deglaciation: The global ICE-6G_C (VM5a)
+  model. J. Geophys. Res. Solid Earth, 120, 450-487.
+  https://doi.org/10.1002/2014JB011176
+  Argus, D.F., Peltier, W.R., Drummond, R. and Moore, A.W. (2014). The
+  Antarctica component of postglacial rebound model ICE-6G_C (VM5a) based
+  on GPS positioning, exposure age dating of ice thicknesses, and relative
+  sea level histories. Geophys. J. Int., 198, 537-563.
+  Distributed by PMIP4: https://pmip4.lsce.ipsl.fr/doku.php/data:ice_ice6g_c
+
+Processing
+  Aggregated onto sim3's geodesic grid by tools/data/build_world.py in
+  https://github.com/djeyprott/sim3 (GPL-3.0-or-later). Ice thickness in
+  10,000 BCE is derived from ICE-6G surface heights by isostatic balance; it
+  is sim3's estimate, not part of ICE-6G.

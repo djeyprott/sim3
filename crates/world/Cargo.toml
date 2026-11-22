@@ -1,0 +1,13 @@
+[package]
+name = "world"
+description = "The geodesic grid and the world's terrain, sea and ice."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[[bin]]
+name = "gridgen"
+path = "src/bin/gridgen.rs"
