@@ -18,25 +18,20 @@ jobs:
           for f in 60s_surface_elev_gtif/ETOPO_2022_v1_60s_N90W180_surface.tif 60s_bed_elev_gtif/ETOPO_2022_v1_60s_N90W180_bed.tif; do
             curl -sIL "https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/data/60s/$f" | grep -iE "^(HTTP|content-length|content-type)"
           done
-      - name: ICE-6G_C (PMIP4 sharebox)
+      - name: ICE-6G_C 1-degree files with ice thickness (candidate URLs)
         run: |
           pip install --quiet netCDF4
-          for t in 0 11.5 12; do
-            url="https://sharebox.lsce.ipsl.fr/index.php/s/1RSwVf7afj38cmG/download?path=%2F&files=I6_C.VM5a_10min.$t.nc"
-            curl -sL -o "ice_$t.nc" -w "$t: HTTP %{http_code}, %{size_download} bytes, %{content_type}\n" "$url"
-            md5sum "ice_$t.nc"
+          base=https://www.atmosp.physics.utoronto.ca/~peltier/datasets
+          for u in \
+            "$base/Ice6G_C_VM5a/I6_C.VM5a_1deg.12.nc" \
+            "$base/Ice6G_C_VM5a/I6_C.VM5a_1deg.12.0.nc" \
+            "$base/Ice6G_C_VM5a/IceThick.nc.gz" \
+            "$base/Ice6G_C_VM5a/" \
+            "$base/Ice6G_D_VM5a/IceThick.nc.gz" \
+            "$base/Ice6G_D_VM5a/" \
+            "$base/" \
+            "https://www.atmosp.physics.utoronto.ca/~peltier/data.php" ; do
+            curl -sL -o probe.bin -w "%{http_code} %{size_download} %{content_type} $u\n" "$u"
+            case "$u" in */) grep -oE 'href="[^"]+"' probe.bin | head -80 ;; esac
+            case "$u" in *data.php) grep -oE 'href="[^"]+"' probe.bin | grep -iE "nc|gz|ice|6G" | head -80 ;; esac
           done
-          python - <<'EOF'
-          import netCDF4
-          for t in ["0", "11.5", "12"]:
-              try:
-                  ds = netCDF4.Dataset(f"ice_{t}.nc")
-              except Exception as e:
-                  print(t, "not netCDF:", e)
-                  print(open(f"ice_{t}.nc", "rb").read(300))
-                  continue
-              print(f"== {t} ka ==")
-              for name, v in ds.variables.items():
-                  attrs = {k: v.getncattr(k) for k in v.ncattrs()}
-                  print(name, v.dimensions, v.shape, attrs)
-          EOF
