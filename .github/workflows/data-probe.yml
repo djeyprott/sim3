@@ -12,16 +12,12 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Look for ICE-6G_C ice thickness
+      - name: Look for GLAC-1D ice thickness
         run: |
           set +e
           for u in \
-            "http://www.atmosp.physics.utoronto.ca/~peltier/data.php" \
-            "https://www.atmosp.physics.utoronto.ca/~peltier/data.php" \
-            "https://sites.physics.utoronto.ca/peltier_wr/datasets/paleo-topography-data" \
-            "https://sites.physics.utoronto.ca/peltier_wr/datasets" ; do
+            "https://www.physics.mun.ca/~lev/dataAccess.html" \
+            "https://pmip4.lsce.ipsl.fr/doku.php/data:ice_glac_1d" ; do
             curl -sL --max-time 60 -o probe.bin -w "%{http_code} %{size_download} %{content_type} $u\n" "$u"
-            grep -oE 'href="[^"]+"' probe.bin | grep -viE "\.(css|js|png|svg|ico)" | head -150
+            grep -oE 'href="[^"]+"' probe.bin | grep -viE "\.(css|js|png|svg|ico)|doku.php\?|/lib/" | head -150
           done
-          echo "== PMIP4 sharebox listing =="
-          curl -s --max-time 60 -X PROPFIND -H "Depth: 1" -u "1RSwVf7afj38cmG:" https://sharebox.lsce.ipsl.fr/public.php/webdav/ | grep -oE "<d:href>[^<]+</d:href>|<d:getcontentlength>[^<]+" | head -150
