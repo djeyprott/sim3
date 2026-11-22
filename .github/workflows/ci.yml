@@ -17,6 +17,12 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Download world data
+        shell: bash
+        run: |
+          mkdir -p data
+          curl -fsSL --retry 3 -o data/world.bin \
+            "https://github.com/${{ github.repository }}/releases/download/world-data-v$(tr -d '[:space:]' < tools/data/VERSION)/world.bin"
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test

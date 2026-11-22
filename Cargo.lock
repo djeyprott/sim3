@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "history"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "serde",
 ]
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "axum",
  "history",
@@ -360,6 +360,7 @@ dependencies = [
  "serde_json",
  "sim",
  "tokio",
+ "world",
 ]
 
 [[package]]
@@ -374,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "sim"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "history",
  "serde",
@@ -522,7 +523,7 @@ dependencies = [
 
 [[package]]
 name = "world"
-version = "0.0.2"
+version = "0.1.0"
 dependencies = [
  "serde",
 ]

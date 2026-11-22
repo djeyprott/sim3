@@ -9,32 +9,42 @@
 <body>
   <header>
     <h1>sim3</h1>
-    <span id="connection" class="status">connecting…</span>
-  </header>
-
-  <main>
-    <section class="clock">
-      <div id="year" class="year">—</div>
-      <div id="date" class="date">—</div>
-      <div id="elapsed" class="elapsed"></div>
-    </section>
-
-    <section class="controls">
+    <div class="clock">
+      <span id="date" class="date">—</span>
+      <span id="elapsed" class="elapsed"></span>
+    </div>
+    <div class="controls">
       <button id="toggle" type="button">Play</button>
       <button id="step-day" type="button" title="Advance one day">+1 day</button>
       <button id="step-month" type="button" title="Advance one month">+1 month</button>
       <button id="step-year" type="button" title="Advance one year">+1 year</button>
-      <label>Speed
-        <select id="speed"></select>
-      </label>
-    </section>
+      <select id="speed" title="Speed"></select>
+    </div>
+    <span id="connection" class="status">connecting…</span>
+  </header>
 
-    <section class="events">
+  <div class="body">
+    <main class="map-area">
+      <canvas id="map"></canvas>
+      <div id="map-loading" class="map-loading">Loading the world map…</div>
+
+      <div class="panel map-options">
+        <div class="option-group" id="epochs" role="group" aria-label="Moment shown"></div>
+        <div class="option-group" id="layers" role="group" aria-label="Map layer"></div>
+      </div>
+
+      <div class="panel hover" id="hover" hidden></div>
+      <div class="panel legend" id="legend"></div>
+      <div class="panel map-help">Drag to pan · scroll to zoom</div>
+    </main>
+
+    <aside class="chronicle">
       <h2>Chronicle</h2>
       <ol id="events"></ol>
-    </section>
-  </main>
+    </aside>
+  </div>
 
+  <script src="/map.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -3,6 +3,8 @@
 //!
 //! Usage: sim3 [--port N] [--no-browser]
 
+mod map;
+
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -35,6 +37,7 @@ struct Control {
 struct Shared {
     sim: Mutex<Simulation>,
     control: Mutex<Control>,
+    map: map::MapData,
 }
 
 type AppState = Arc<Shared>;
@@ -209,6 +212,33 @@ async fn get_events(
     Json(events)
 }
 
+async fn get_map_info(State(shared): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::to_value(&shared.map.info).unwrap())
+}
+
+fn binary(bytes: axum::body::Bytes) -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "application/octet-stream")], bytes)
+}
+
+async fn get_map_raster(State(shared): State<AppState>) -> impl IntoResponse {
+    binary(shared.map.raster.clone())
+}
+
+#[derive(Deserialize)]
+struct EpochQuery {
+    epoch: usize,
+}
+
+async fn get_map_cells(
+    State(shared): State<AppState>,
+    Query(q): Query<EpochQuery>,
+) -> axum::response::Response {
+    match shared.map.cell_blobs.get(q.epoch) {
+        Some(blob) => binary(blob.clone()).into_response(),
+        None => (axum::http::StatusCode::NOT_FOUND, "no such epoch").into_response(),
+    }
+}
+
 async fn index() -> Html<&'static str> {
     Html(include_str!("../../../viewer/index.html"))
 }
@@ -217,6 +247,13 @@ async fn app_js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         include_str!("../../../viewer/app.js"),
+    )
+}
+
+async fn map_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("../../../viewer/map.js"),
     )
 }
 
@@ -262,7 +299,13 @@ async fn main() {
         }
     }
 
+    println!("Preparing the world map...");
+    let started = Instant::now();
+    let map = map::MapData::build();
+    println!("Map ready in {:.1} s.", started.elapsed().as_secs_f64());
+
     let shared: AppState = Arc::new(Shared {
+        map,
         sim: Mutex::new(Simulation::new()),
         control: Mutex::new(Control {
             paused: true,
@@ -279,10 +322,14 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index))
         .route("/app.js", get(app_js))
+        .route("/map.js", get(map_js))
         .route("/style.css", get(style_css))
         .route("/api/state", get(get_state))
         .route("/api/control", post(post_control))
         .route("/api/events", get(get_events))
+        .route("/api/map/info", get(get_map_info))
+        .route("/api/map/raster", get(get_map_raster))
+        .route("/api/map/cells", get(get_map_cells))
         .with_state(shared);
 
     // Only listen on this computer, never on the network.

@@ -35,6 +35,12 @@ jobs:
       - if: steps.version.outputs.exists == 'false'
         uses: dtolnay/rust-toolchain@stable
       - if: steps.version.outputs.exists == 'false'
+        name: Download world data
+        run: |
+          mkdir -p data
+          curl -fsSL --retry 3 -o data/world.bin \
+            "https://github.com/${{ github.repository }}/releases/download/world-data-v$(tr -d '[:space:]' < tools/data/VERSION)/world.bin"
+      - if: steps.version.outputs.exists == 'false'
         run: cargo build --release --bin sim3
       - if: steps.version.outputs.exists == 'false'
         name: Publish release

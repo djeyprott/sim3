@@ -30,7 +30,6 @@ async function api(path, body) {
 
 function render() {
   if (!state) return;
-  $("year").textContent = state.year_label;
   $("date").textContent = state.date_label;
   const years = state.years_elapsed;
   $("elapsed").textContent = `${years.toLocaleString()} ${years === 1 ? "year" : "years"} simulated`;
@@ -91,3 +90,55 @@ $("speed").addEventListener("change", async (ev) => {
 
 poll();
 setInterval(poll, 250);
+
+// ---- map ----
+
+const fmt = (m) => `${Math.round(m).toLocaleString()} m`;
+const SURFACE = ["Sea", "Land", "Below sea level, cut off from the ocean"];
+
+function hoverHtml(h) {
+  const ns = h.lat >= 0 ? "N" : "S", ew = h.lon >= 0 ? "E" : "W";
+  const rows = [
+    `<div class="coords">${Math.abs(h.lat).toFixed(2)}°${ns}, ${Math.abs(h.lon).toFixed(2)}°${ew} · ${h.epochLabel}</div>`,
+    `<div>${h.ice > 0 && h.kind !== 0 ? "Ice" : SURFACE[h.kind]}</div>`,
+    h.kind === 0
+      ? `<div>Average depth ${fmt(-h.elev)} (deepest ${fmt(-h.elevMin)})</div>`
+      : `<div>Average height ${fmt(h.elev)} (lowest ${fmt(h.elevMin)}, highest ${fmt(h.elevMax)})</div>`,
+    `<div>Land: ${Math.round(h.landShare * 100)}% of the cell</div>`,
+  ];
+  if (h.ice > 0) rows.push(`<div>Ice thickness ${fmt(h.ice)}</div>`);
+  return rows.join("");
+}
+
+function optionButtons(container, items, current, onPick) {
+  container.innerHTML = "";
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = it.label;
+    b.setAttribute("aria-pressed", String(it.id === current));
+    b.addEventListener("click", () => {
+      for (const o of container.children) o.setAttribute("aria-pressed", "false");
+      b.setAttribute("aria-pressed", "true");
+      onPick(it.id);
+    });
+    container.appendChild(b);
+  }
+}
+
+WorldMap.create($("map"), (h) => {
+  const box = $("hover");
+  box.hidden = !h;
+  if (h) box.innerHTML = hoverHtml(h);
+}).then((map) => {
+  $("map-loading").remove();
+  const showLegend = () => { $("legend").innerHTML = map.legendHtml(); };
+  optionButtons($("epochs"), map.epochs.map((e) => ({ id: e.index, label: e.label })), 0, (i) => map.setEpoch(i));
+  optionButtons($("layers"), map.layers.map((l) => ({ id: l.id, label: l.name })), "terrain", (id) => {
+    map.setLayer(id);
+    showLegend();
+  });
+  showLegend();
+}).catch((err) => {
+  $("map-loading").textContent = `The map could not be drawn: ${err.message}`;
+});

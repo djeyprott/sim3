@@ -2,7 +2,7 @@
 
 A human history simulator. It starts around 10,000 BCE on Earth's real terrain and simulates climate, populations, cultures, languages, religions, technology, organizations and the people who lead them, with a browser viewer for watching history unfold and reviewing what happened.
 
-Status: **Phase 0**, the empty shell. Time runs from 10,000 BCE and you can pause, step and change speed; nothing is simulated yet. See [docs/design.md](docs/design.md) for the plan.
+Status: **Phase 1, step 1**: a map of Earth's terrain, sea and ice on 1 January 10,000 BCE (with today's for comparison). Time runs and can be paused and stepped; the climate comes next. See [docs/design.md](docs/design.md) for the plan.
 
 ## Running it on Windows
 
@@ -12,6 +12,17 @@ Status: **Phase 0**, the empty shell. Time runs from 10,000 BCE and you can paus
 3. To stop the simulation, close the console window.
 
 If the browser doesn't open, go to http://127.0.0.1:7340 yourself. The viewer only works on this computer; nothing is reachable from the network.
+
+## Map links
+
+A view can be opened directly by adding `#latitude,longitude,zoom` to the address, for example http://127.0.0.1:7340/#54,3,9 for the North Sea.
+
+## Data sources
+
+- Terrain today: NOAA NCEI (2022), ETOPO 2022 Global Relief Model, https://doi.org/10.25921/fd45-gt74
+- Ice-age topography and ice extent: Peltier, Argus & Drummond (2015), ICE-6G_C (VM5a), J. Geophys. Res. Solid Earth 120, 450-487; Argus et al. (2014), Geophys. J. Int. 198, 537-563. Distributed by PMIP4.
+
+Ice thickness in 10,000 BCE is sim3's own estimate from these data (see `tools/data/build_world.py`).
 
 ## License
 
