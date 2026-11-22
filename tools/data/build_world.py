@@ -25,14 +25,16 @@ coarse reconstruction on detailed modern terrain. ICE-6G is interpolated
 linearly between its 12,000 and 11,500 year slices.
 
 Ice thickness in 10,000 BCE is not in the files we can reach, so it is
-derived from isostasy (the crust floating on the mantle): ice of thickness H
-pushes the ground down by (rho_ice / rho_mantle) * H. With surface s (then,
-relative to then sea level), today's bedrock b0, today's ice H0 and the
-global sea-level drop dSL:
+derived from isostasy (the crust floating on the mantle): a load of mass M
+per square metre pushes the ground down by M / rho_mantle. Then, the ground
+carried grounded ice of thickness H (load rho_ice * H). Today it carries
+either grounded ice H0 (load rho_ice * H0) or, under open sea and floating
+ice shelves, the water column of depth d (load rho_seawater * d; floating
+ice weighs exactly what it displaces). With surface s (then, relative to then
+sea level), today's bedrock b0 and the global sea-level drop dSL:
 
-    s = b0 + dSL - r * (H - H0) + H    =>    H = (s - b0 - dSL - r * H0) / (1 - r)
-
-with r = rho_ice / rho_mantle. This assumes the ground had fully adjusted to
+    s = b0 + dSL - (rho_ice * H - load_now) / rho_mantle + H
+    =>  H = (s - b0 - dSL - load_now / rho_mantle) / (1 - rho_ice / rho_mantle) This assumes the ground had fully adjusted to
 the ice; in reality it lags, so H may be somewhat underestimated. The report
 checks the result: the extra ice volume should match the sea-level drop.
 """
@@ -174,8 +176,13 @@ def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, out_path, repor
     ice_now = sum_ice / sum_w
     s_then = s_now + delta
 
+    # Load on the ground today (kg/m2): grounded ice, or else the water
+    # column (open sea, or ice floating on it).
+    depth_now = np.clip(-b_now, 0, None)
+    grounded_now = RHO_ICE * ice_now > RHO_SEAWATER * depth_now
+    load_now = np.where(grounded_now, RHO_ICE * ice_now, RHO_SEAWATER * depth_now)
     r = RHO_ICE / RHO_MANTLE
-    h_iso = (s_then - b_now - dsl - r * ice_now) / (1 - r)
+    h_iso = (s_then - b_now - dsl - load_now / RHO_MANTLE) / (1 - r)
     # Only where ICE-6G has ice: elsewhere small differences between the
     # datasets would otherwise turn into phantom ice.
     ice_then = np.where(ice_frac_then > 0, np.clip(h_iso, 0, None), 0.0)
