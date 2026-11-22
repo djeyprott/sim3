@@ -1,0 +1,26 @@
+name: Release
+
+# Pushing a tag like v0.0.1 builds sim3.exe on Windows and publishes it
+# on the repo's Releases page.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --bin sim3
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" target/release/sim3.exe \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Download sim3.exe and double-click it. See the README for details."

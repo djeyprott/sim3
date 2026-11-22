@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sim3</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>sim3</h1>
+    <span id="connection" class="status">connecting…</span>
+  </header>
+
+  <main>
+    <section class="clock">
+      <div id="year" class="year">—</div>
+      <div id="date" class="date">—</div>
+      <div id="elapsed" class="elapsed"></div>
+    </section>
+
+    <section class="controls">
+      <button id="toggle" type="button">Play</button>
+      <button id="step" type="button" title="Advance one month">+1 month</button>
+      <button id="step-year" type="button" title="Advance one year">+1 year</button>
+      <label>Speed
+        <select id="speed"></select>
+      </label>
+    </section>
+
+    <section class="events">
+      <h2>Chronicle</h2>
+      <ol id="events"></ol>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

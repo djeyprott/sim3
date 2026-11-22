@@ -1,0 +1,10 @@
+[package]
+name = "sim"
+description = "The simulation core: time, the main loop, and (later) every simulated system."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+history = { path = "../history" }
+serde.workspace = true

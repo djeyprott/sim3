@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/sim", "crates/history", "crates/server"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/djeyprott/sim3"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
