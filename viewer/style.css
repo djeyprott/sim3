@@ -23,9 +23,12 @@ header {
 h1 { margin: 0; font-size: 18px; letter-spacing: 0.08em; }
 h2 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: normal; letter-spacing: 0.08em; text-transform: uppercase; }
 
-.clock { display: flex; align-items: baseline; gap: 12px; min-width: 300px; }
-.date { font-size: 22px; color: var(--accent); font-variant-numeric: tabular-nums; }
-.elapsed { color: var(--muted); font-size: 13px; }
+/* Fixed widths so the changing date never shifts the controls beside it.
+   Sized for the longest labels ("30 September 10000 BCE",
+   "88,888 years simulated") with room to spare. */
+.clock { display: flex; align-items: baseline; gap: 12px; flex: none; }
+.date { font-size: 22px; color: var(--accent); font-variant-numeric: tabular-nums; width: 11.5em; white-space: nowrap; }
+.elapsed { color: var(--muted); font-size: 13px; width: 10em; white-space: nowrap; }
 
 .controls { display: flex; gap: 6px; align-items: center; }
 .status { margin-left: auto; color: var(--muted); font-size: 13px; }
