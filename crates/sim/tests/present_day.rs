@@ -56,6 +56,44 @@ fn present_day_check() {
             b.lat_from, b.lat_to, b.model_c, b.observed_c, b.model_swing_c, b.observed_swing_c
         );
     }
+    if let Some(op) = world.data.observed_precipitation.as_ref() {
+        let r = climate::check::rain_scores(
+            &sim.climate,
+            obs,
+            op,
+            &world.map_grid,
+            &world.data.epochs[sim.epoch].land_share,
+        )
+        .unwrap();
+        println!(
+            "rain correlation {:.2} | land mean {:.0} vs {:.0} mm | zones agree {:.0}%",
+            r.correlation,
+            r.land_mean_model_mm,
+            r.land_mean_observed_mm,
+            100.0 * r.zone_agreement
+        );
+        for (z, (m, o)) in climate::koppen::Zone::ALL
+            .iter()
+            .zip(r.zone_share_model.iter().zip(&r.zone_share_observed))
+        {
+            println!(
+                "  {:>2}: {:>4.1}% vs {:>4.1}%",
+                z.code(),
+                100.0 * m,
+                100.0 * o
+            );
+        }
+        for l in &r.landmarks {
+            println!(
+                "  {:>20} ({}): {:.2} vs {:.2} {}",
+                l.name,
+                l.expect,
+                l.model,
+                l.observed,
+                if l.pass { "pass" } else { "MISS" }
+            );
+        }
+    }
     // Step 2 expectations: the world average passes; the agreed land pass
     // marks are reported but only required from Step 4.
     assert!(
@@ -115,7 +153,7 @@ fn worst_swing_cells() {
 #[test]
 #[ignore]
 fn tune() {
-    use climate::{Climate, Orbit, Tuning};
+    use climate::{Climate, Orbit, Tuning, ATMOSPHERE_TUNED};
     let world = world().unwrap();
     let epoch = world.epoch_for_year(1981);
     let obs = world.data.observed_temperature.as_ref().unwrap();
@@ -129,6 +167,7 @@ fn tune() {
             &world.data.epochs[epoch],
             &Orbit::present(),
             tuning,
+            ATMOSPHERE_TUNED,
         );
         c.set_window(30, 49);
         let days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
@@ -148,27 +187,63 @@ fn tune() {
         let global = s.global_mean_model_c - s.global_mean_observed_c;
         (global.abs() + profile, global, profile, s)
     };
-    let mut best: Option<(f64, Tuning)> = None;
-    for a0 in [0.30, 0.32, 0.34, 0.36] {
-        for a2 in [0.05, 0.10, 0.15, 0.20, 0.25] {
-            for ice in [0.62, 0.70, 0.78] {
-                for d in [0.4, 0.5, 0.6, 0.7] {
-                    let t = Tuning {
-                        albedo_a0: a0,
-                        albedo_a2: a2,
-                        albedo_ice: ice,
-                        diffusion: d,
-                    };
-                    let (score, g, p, _) = run(t);
-                    if best.is_none_or(|b| score < b.0) {
-                        println!("{t:?}: global {g:+.2}, profile {p:.2}, score {score:.2}");
-                        best = Some((score, t));
+    // Coordinate search from the current values: try each value one step up
+    // and down (both at once, on two threads), keep any improvement, and
+    // halve the steps when nothing improves.
+    let get = |t: &Tuning, k: usize| [t.albedo_a0, t.albedo_a2, t.albedo_ice, t.diffusion][k];
+    let set = |t: &mut Tuning, k: usize, v: f64| match k {
+        0 => t.albedo_a0 = v,
+        1 => t.albedo_a2 = v,
+        2 => t.albedo_ice = v,
+        _ => t.diffusion = v,
+    };
+    let mut steps = [0.02, 0.05, 0.08, 0.1];
+    let mut current = climate::TUNED;
+    let mut current_score = run(current).0;
+    println!("start {current:?}: score {current_score:.2}");
+    for _round in 0..3 {
+        loop {
+            let mut improved = false;
+            for (k, &step) in steps.iter().enumerate() {
+                let candidates: Vec<Tuning> = [-1.0, 1.0]
+                    .iter()
+                    .map(|sgn| {
+                        let mut t = current;
+                        set(&mut t, k, (get(&current, k) + sgn * step).max(0.0));
+                        t
+                    })
+                    .collect();
+                let results: Vec<(f64, f64, f64)> = std::thread::scope(|sc| {
+                    let hs: Vec<_> = candidates
+                        .iter()
+                        .map(|&t| {
+                            sc.spawn(move || {
+                                let r = run(t);
+                                (r.0, r.1, r.2)
+                            })
+                        })
+                        .collect();
+                    hs.into_iter().map(|h| h.join().unwrap()).collect()
+                });
+                for (t, r) in candidates.iter().zip(&results) {
+                    if r.0 < current_score {
+                        current = *t;
+                        current_score = r.0;
+                        improved = true;
+                        println!(
+                            "{t:?}: global {:+.2}, profile {:.2}, score {:.2}",
+                            r.1, r.2, r.0
+                        );
                     }
                 }
             }
+            if !improved {
+                break;
+            }
         }
+        steps.iter_mut().for_each(|s| *s /= 2.0);
     }
-    let (_, t) = best.unwrap();
+    let t = current;
     let (_, g, p, s) = run(t);
     println!(
         "BEST {t:?}: global {g:+.2} profile {p:.2} annual {:.2} swing {:.2} bias {:.2}",
@@ -199,6 +274,7 @@ fn profile_speed() {
         "whole sim: {:.2} ms per year",
         t.elapsed().as_secs_f64() * 1e3 / 20.0
     );
+    let before = sim.climate.timing;
     let t = Instant::now();
     let mut passes = 0;
     for m in 0..240 {
@@ -210,4 +286,7 @@ fn profile_speed() {
         "climate.step_month: {:.3} ms per month",
         t.elapsed().as_secs_f64() * 1e3 / 240.0
     );
+    let after = sim.climate.timing;
+    let [w, h, m] = [0, 1, 2].map(|k| (after[k] - before[k]) * 1e3 / 240.0);
+    println!("  of which winds {w:.2} ms, temperature {h:.2} ms, rain and snow {m:.2} ms");
 }

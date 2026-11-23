@@ -8,7 +8,7 @@ pub mod world_context;
 
 use std::sync::Arc;
 
-use climate::{Climate, Orbit, TUNED};
+use climate::{Climate, Orbit, ATMOSPHERE_TUNED, TUNED};
 use history::{EventKind, EventLog, Tick};
 pub use scenario::Scenario;
 use time::Date;
@@ -42,6 +42,7 @@ impl Simulation {
             &world.data.epochs[epoch],
             &orbit,
             TUNED,
+            ATMOSPHERE_TUNED,
         );
         if let Some((a, b)) = scenario.comparison_window() {
             climate.set_window(a, b);

@@ -111,6 +111,7 @@ setInterval(poll, 250);
 const fmt = (m) => `${Math.round(m).toLocaleString()} m`;
 const fmtC = (t) => `${t >= 0 ? "" : "−"}${Math.abs(t).toFixed(1)} °C`;
 const SURFACE = ["Sea", "Land", "Below sea level, cut off from the ocean"];
+let ZONE_NAMES = [];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
   "October", "November", "December"];
@@ -130,8 +131,17 @@ function hoverHtml(h) {
     `<div>Land: ${Math.round(h.landShare * 100)}% of the cell</div>`,
   ];
   if (h.ice > 0) rows.push(`<div>Ice thickness ${fmt(h.ice)}</div>`);
-  if (h.temp !== null && h.temp !== undefined) {
-    rows.push(`<div>${h.tempTitle}: ${h.tempMode === "diff" ? (h.temp >= 0 ? "+" : "−") + Math.abs(h.temp).toFixed(1) + " °C" : fmtC(h.temp)}</div>`);
+  if (h.field !== null && h.field !== undefined) {
+    const v = h.field;
+    const text = {
+      temp: () => fmtC(v / 100),
+      diff: () => `${v >= 0 ? "+" : "−"}${Math.abs(v / 100).toFixed(1)} °C`,
+      rain: () => `${Math.round(v).toLocaleString()} mm`,
+      ratio: () => { const r = Math.pow(10, v / 100); return r >= 1 ? `×${r.toFixed(1)}` : `÷${(1 / r).toFixed(1)}`; },
+      snow: () => `${Math.round(v).toLocaleString()} mm of water`,
+      zone: () => { const z = ZONE_NAMES[v]; return z ? `${z.code} · ${z.name}` : "—"; },
+    }[h.fieldMode] ?? (() => String(v));
+    rows.push(`<div>${h.fieldTitle}: ${text()}</div>`);
   }
   rows.push(`<div class="coords">Click for this place's climate</div>`);
   return rows.join("");
@@ -181,12 +191,46 @@ function lineChart({ series, xLabels, xTicks, width = 340, height = 170, yUnit =
   return out + "</svg>";
 }
 
+// Monthly rainfall as bars (model) with observed marks, sharing the
+// month axis of the temperature chart above it.
+function rainBars({ model, observed, width = 340, height = 110 }) {
+  const pad = { l: 34, r: 8, t: 8, b: 18 };
+  const all = [...model, ...(observed ?? [])].filter(Number.isFinite);
+  let hi = Math.max(10, ...all);
+  const step = [10, 20, 50, 100, 200, 500][[10, 20, 50, 100, 200, 500].findIndex((s) => hi / s <= 4)] ?? 1000;
+  hi = Math.ceil(hi / step) * step;
+  const X = (i) => pad.l + i / 11 * (width - pad.l - pad.r);
+  const Y = (v) => pad.t + (hi - v) / hi * (height - pad.t - pad.b);
+  const bw = (width - pad.l - pad.r) / 11 * 0.55;
+  let out = `<svg viewBox="0 0 ${width} ${height}" role="img">`;
+  for (let v = 0; v <= hi + 1e-9; v += step) {
+    out += `<line x1="${pad.l}" x2="${width - pad.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="#3a342a" stroke-width="1"/>`;
+    out += `<text x="${pad.l - 4}" y="${Y(v) + 3}" text-anchor="end">${v}${v === hi ? " mm" : ""}</text>`;
+  }
+  model.forEach((v, i) => {
+    out += `<rect x="${X(i) - bw / 2}" y="${Y(v)}" width="${bw}" height="${Y(0) - Y(v)}" fill="#5b9bc9"/>`;
+  });
+  if (observed) {
+    observed.forEach((v, i) => {
+      out += `<line x1="${X(i) - bw * 0.8}" x2="${X(i) + bw * 0.8}" y1="${Y(v)}" y2="${Y(v)}" stroke="#e8e2d0" stroke-width="2"/>`;
+    });
+  }
+  MONTHS.forEach((m, i) => { out += `<text x="${X(i)}" y="${height - 5}" text-anchor="middle">${m[0]}</text>`; });
+  return out + "</svg>";
+}
+
+const zoneText = (code) => {
+  const z = ZONE_NAMES.find((z) => z.code === code);
+  return z ? `${z.code} · ${z.name}` : "—";
+};
+
 async function showCellChart(h) {
   const d = await api(`/api/climate/cell?cell=${h.cell}`);
   const months = (arr) => arr.map((v, i) => [i, v]);
   const series = [];
   const key = [];
-  if (d.window) {
+  const useWindow = !!d.window;
+  if (useWindow) {
     series.push({ values: months(d.window), color: "#d9a441" });
     key.push(`<span class="model">Model, 1981–2010</span>`);
   } else {
@@ -197,10 +241,18 @@ async function showCellChart(h) {
     series.push({ values: months(d.observed), color: "#8fb3d9", dash: true });
     key.push(`<span class="obs">Observed, 1981–2010</span>`);
   }
+  const rain = useWindow ? d.rain_window : d.rain_normal;
+  const total = (a) => Math.round(a.reduce((x, y) => x + y, 0)).toLocaleString();
+  const zone = useWindow ? d.zone_window : d.zone;
   const box = $("cell-chart");
   box.innerHTML = `<div class="head"><strong>Climate at ${coords(h)}</strong><button type="button" id="cell-close">×</button></div>` +
     `<div class="coords">Average temperature by month · height ${fmt(Math.max(0, h.elev))}</div>` +
-    lineChart({ series, xTicks: MONTHS.map((m, i) => [i, m[0]]) }) + `<div class="key">${key.join("")}</div>`;
+    lineChart({ series, xTicks: MONTHS.map((m, i) => [i, m[0]]) }) + `<div class="key">${key.join("")}</div>` +
+    `<div class="coords">Rain and snow by month: model ${total(rain)} mm a year` +
+    (d.rain_observed ? `, observed ${total(d.rain_observed)} mm (white marks)` : "") + `</div>` +
+    rainBars({ model: rain, observed: d.rain_observed }) +
+    `<div class="coords">Climate zone: ${zoneText(zone)}` +
+    (d.zone_observed ? ` · observed ${zoneText(d.zone_observed)}` : "") + `</div>`;
   box.hidden = false;
   $("cell-close").addEventListener("click", () => { box.hidden = true; });
 }
@@ -234,8 +286,31 @@ function checkHtml(d) {
     row(`Typical land error, summer–winter swing (mark ${pm.seasonal_swing_error_c} °C)`, `${s.seasonal_swing_error_c.toFixed(1)} °C`,
       s.pass_seasonal) +
     row("Land on average too warm (+) or cold (−)", `${s.land_bias_c >= 0 ? "+" : "−"}${Math.abs(s.land_bias_c).toFixed(1)} °C`) +
-    `</table><p class="note">At this step only the world average is expected to pass. The land marks need rain, winds and sea ice (Steps 3–4). ` +
-    `Compare maps with the Temperature layer's "Observed" and "Model − observed" views.</p>`;
+    `</table>` + rainCheckHtml(d) +
+    `<p class="note">Compare maps with each layer's "Observed" and "Model − observed" views.</p>`;
+}
+
+function rainCheckHtml(d) {
+  const r = d.rain, pm = d.pass_marks;
+  if (!r) return "";
+  const row = (label, value, ok) => `<tr><td>${label}</td><td class="num">${value}</td>` +
+    `<td class="num ${ok === undefined ? "" : ok ? "pass" : "fail"}">${ok === undefined ? "" : ok ? "pass" : "miss"}</td></tr>`;
+  const pct = (x) => `${Math.round(100 * x)}%`;
+  let out = `<h3>Rain and climate zones</h3><table>` +
+    row(`Pattern of yearly rain matches observed (correlation, mark ${pm.rain_correlation})`, r.correlation.toFixed(2), r.pass_correlation) +
+    row(`Land in the right climate zone (mark ${pct(pm.zone_agreement)})`, pct(r.zone_agreement), r.pass_zones) +
+    row("Average yearly rain on land, model / observed", `${Math.round(r.land_mean_model_mm)} / ${Math.round(r.land_mean_observed_mm)} mm`) +
+    `</table><table class="zones"><tr><th>Zone</th><th class="num">Model</th><th class="num">Observed</th></tr>` +
+    d.zones.map((z, i) => `<tr><td>${zoneText(z)}</td><td class="num">${pct(r.zone_share_model[i])}</td>` +
+      `<td class="num">${pct(r.zone_share_observed[i])}</td></tr>`).join("") +
+    `</table><table>`;
+  const what = { dry: "dry (under 250 mm)", wet: "wet (over 1,500 mm)", monsoon: "most rain June–September, 500 mm+" };
+  for (const l of r.landmarks) {
+    const v = l.expect === "monsoon" ? `${pct(l.model)} (obs ${pct(l.observed)})`
+      : `${Math.round(l.model).toLocaleString()} mm (obs ${Math.round(l.observed).toLocaleString()})`;
+    out += row(`${l.name}: ${what[l.expect]}`, v, l.pass);
+  }
+  return out + `</table>`;
 }
 
 async function refreshCheck() {
@@ -245,20 +320,29 @@ async function refreshCheck() {
   $("check-body").innerHTML = checkHtml(await api("/api/climate/check"));
 }
 
+// The climate layers and what each can show.
+const FIELDS = {
+  temperature: { views: ["current", "normal", "observed", "difference"] },
+  rain: { views: ["current", "normal", "observed", "difference"] },
+  snow: { views: ["current", "normal"] },
+  zone: { views: ["normal", "observed"] },
+};
+const VIEW_LABELS = { current: "This month", normal: "Recent average", observed: "Observed", difference: "Model − observed" };
 const temp = { view: "normal", month: null };
 let lastTempTick = -1;
 
 function tempOptions(map) {
   const box = $("temp-options");
-  box.hidden = map.layer() !== "temperature";
+  const f = FIELDS[map.layer()];
+  box.hidden = !f;
   if (box.hidden) return;
-  const views = [{ id: "current", label: "This month" }, { id: "normal", label: "Recent average" }];
-  if (state?.scenario === "present_day_check") {
-    views.push({ id: "observed", label: "Observed" }, { id: "difference", label: "Model − observed" });
-  }
+  const checkOnly = ["observed", "difference"];
+  const views = f.views
+    .filter((v) => state?.scenario === "present_day_check" || !checkOnly.includes(v))
+    .map((id) => ({ id, label: map.layer() === "zone" && id === "normal" ? "Model" : VIEW_LABELS[id] }));
   if (!views.some((v) => v.id === temp.view)) temp.view = "normal";
   optionButtons(box, views, temp.view, (id) => { temp.view = id; tempOptions(map); refreshTemperature(map, true); });
-  if (temp.view !== "current") {
+  if (temp.view !== "current" && map.layer() !== "zone") {
     const sel = document.createElement("select");
     sel.innerHTML = `<option value="">Whole year</option>` + MONTH_NAMES.map((m, i) => `<option value="${i}">${m}</option>`).join("");
     sel.value = temp.month ?? "";
@@ -268,22 +352,55 @@ function tempOptions(map) {
 }
 
 async function refreshTemperature(map, force) {
-  if (map.layer() !== "temperature" || !state) return;
+  const layer = map.layer();
+  if (!FIELDS[layer] || !state) return;
   const fixed = temp.view === "observed";
   if (!force && (fixed || state.tick === lastTempTick)) return;
   lastTempTick = state.tick;
-  const q = `/api/climate/map?view=${temp.view}${temp.view !== "current" && temp.month !== null ? `&month=${temp.month}` : ""}`;
+  const month = layer !== "zone" && temp.view !== "current" ? temp.month : null;
+  const q = `/api/climate/map?field=${layer}&view=${temp.view}${month !== null ? `&month=${month}` : ""}`;
   const buf = await fetch(q).then((r) => r.arrayBuffer());
+  if (map.layer() !== layer) return;
   const when = temp.view === "current" ? state.date_label.replace(/^\d+ /, "")
-    : temp.month === null ? "whole year" : MONTH_NAMES[temp.month];
-  const titles = {
-    current: `Temperature, ${when} (°C)`,
-    normal: `Average temperature, ${when}, recent years (°C)`,
-    observed: `Observed average, ${when}, 1981–2010 (°C)`,
-    difference: `Model minus observed, ${when} (°C)`,
-  };
-  map.setTemperature(new Int16Array(buf), temp.view === "difference" ? "diff" : "temp", titles[temp.view]);
+    : month === null ? "whole year" : MONTH_NAMES[month];
+  const recent = state.scenario === "present_day_check" ? "1981–2010" : "recent years";
+  let mode, title;
+  if (layer === "temperature") {
+    mode = temp.view === "difference" ? "diff" : "temp";
+    title = {
+      current: `Temperature, ${when} (°C)`,
+      normal: `Average temperature, ${when}, recent years (°C)`,
+      observed: `Observed average, ${when}, 1981–2010 (°C)`,
+      difference: `Model minus observed, ${when} (°C)`,
+    }[temp.view];
+  } else if (layer === "rain") {
+    mode = temp.view === "difference" ? "ratio" : "rain";
+    title = {
+      current: `Rain and snow, ${when} (mm)`,
+      normal: `Rain and snow, ${when}, recent years (mm)`,
+      observed: `Observed rain and snow, ${when}, 1981–2010 (mm)`,
+      difference: `Model rain as a multiple of observed, ${when}`,
+    }[temp.view];
+  } else if (layer === "snow") {
+    mode = "snow";
+    title = temp.view === "current" ? `Lying snow now (mm of water)`
+      : month === null ? "Deepest snow of the year, recent years (mm of water)" : `Lying snow at the end of ${when}, recent years (mm of water)`;
+  } else {
+    mode = "zone";
+    title = temp.view === "observed" ? "Observed climate zones, 1981–2010" : `Climate zones, model, ${recent}`;
+  }
+  const monthly = layer === "rain" && (temp.view === "current" || month !== null);
+  map.setField(layer, new Int16Array(buf), mode, title, monthly);
   $("legend").innerHTML = map.legendHtml();
+}
+
+const winds = { on: false, tick: -1 };
+async function refreshWinds(map, force) {
+  if (!winds.on) { map.setArrows(null); return; }
+  if (!state || (!force && state.tick === winds.tick)) return;
+  winds.tick = state.tick;
+  const d = await api("/api/climate/winds");
+  if (winds.on) map.setArrows(d.winds);
 }
 
 WorldMap.create($("map"), (h) => {
@@ -292,6 +409,12 @@ WorldMap.create($("map"), (h) => {
   if (h) box.innerHTML = hoverHtml(h);
 }, (h) => showCellChart(h).catch(() => {})).then((map) => {
   $("map-loading").remove();
+  ZONE_NAMES = map.zones;
+  $("winds-toggle").addEventListener("click", (e) => {
+    winds.on = !winds.on;
+    e.target.setAttribute("aria-pressed", String(winds.on));
+    refreshWinds(map, true).catch(() => {});
+  });
   const showLegend = () => { $("legend").innerHTML = map.legendHtml(); };
   const epochButtons = () => optionButtons($("epochs"), map.epochs.map((e) => ({ id: e.index, label: e.label })), map.epoch(),
     (i) => map.setEpoch(i));
@@ -320,6 +443,7 @@ WorldMap.create($("map"), (h) => {
       refreshTemperature(map, true);
     }
     refreshTemperature(map, false);
+    refreshWinds(map, false).catch(() => {});
   }, 1000);
   setInterval(() => { refreshWorldChart().catch(() => {}); refreshCheck().catch(() => {}); }, 2000);
 }).catch((err) => {

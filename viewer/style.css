@@ -54,6 +54,7 @@ button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent);
 .map-area { position: relative; flex: 1; min-width: 0; background: #0d0c09; }
 #map { width: 100%; height: 100%; display: block; cursor: grab; }
 #map.dragging { cursor: grabbing; }
+.map-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .map-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
 
 .panel {
@@ -98,6 +99,10 @@ button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent);
 .check td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 8px; }
 .check .pass { color: #8fb573; }
 .check .fail { color: #d0705a; }
+.check h3 { font-size: 13px; margin: 14px 0 4px; color: var(--muted); font-weight: 600; }
+.check table + table { margin-top: 8px; }
+.check th { text-align: left; font-weight: normal; color: var(--muted); padding: 4px 0; border-bottom: 1px solid var(--line); }
+.check th.num { text-align: right; }
 .check .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .rate { color: var(--muted); font-size: 12px; width: 10.5em; }
 header button, header select, header label { white-space: nowrap; }

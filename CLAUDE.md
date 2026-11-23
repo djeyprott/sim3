@@ -12,6 +12,7 @@ A human history simulator starting around 10,000 BCE on Earth's real terrain. Th
 ## Simulation rules
 
 - **No arbitrary values.** Parameters have real-world units and a stated source (a comment citing the paper, dataset or reasoning). No made-up scores like "stability +5".
+- **No Earth-specific shortcuts.** Nothing in the climate (or any other system) may depend on knowing where Earth's continents, oceans or mountains are. Everything is driven by the terrain data, so generated worlds work the same way; Earth is the test case.
 - **Derived, not declared.** Aggregate qualities (stability, prosperity, legitimacy) are computed from underlying facts, never stored as free-floating numbers.
 - Every phase ends with something the owner can see in the viewer.
 - Every event that matters goes into the `history` event log, with its causes.
@@ -22,7 +23,7 @@ A human history simulator starting around 10,000 BCE on Earth's real terrain. Th
 - `crates/sim`: simulation core, time (`time.rs`; one tick = one day; proleptic Gregorian calendar; astronomical year numbering internally, BCE/CE only for display). Systems run at their own cadence (daily, seasonal, yearly), not all every day.
 - `crates/server`: the `sim3` binary. Runs the simulation on a background thread and serves the viewer on 127.0.0.1:7340.
 - `crates/world`: geodesic grid (`grid.rs`; map grid level 8 = 655,362 cells, climate grid level 6 = 40,962 cells; indices stable across levels), world data file parsing (`data.rs`), sea/land/inland-basin classification (`terrain.rs`). `gridgen` binary exports cell centres for the data pipeline.
-- `crates/climate`: monthly climate on the 40,962-cell climate grid. `orbit.rs` (Berger & Loutre 1991 table, Berger 1978 insolation, monthly sunshine table), `model.rs` (energy balance solved for sea-level-equivalent temperature; surface = minus 6.5 °C/km; physical constants with sources; the only tuned values are in `TUNED`), `solver.rs` (implicit transport on the level-4 grid + energy-conserving local exchange), `check.rs` (present-day scores vs CHELSA and the agreed pass marks).
+- `crates/climate`: monthly climate on the 40,962-cell climate grid. `orbit.rs` (Berger & Loutre 1991 table, Berger 1978 insolation, monthly sunshine table), `model.rs` (energy balance solved for sea-level-equivalent temperature; surface = minus 6.5 °C/km; physical constants with sources; the only tuned values are in `TUNED`), `solver.rs` (implicit transport on the level-4 grid + energy-conserving local exchange), `atmosphere.rs` (pressure belts + thermal lows, winds, monthly moisture balance and rain on the level-4 grid; orographic rain on the climate grid), `koppen.rs` (Köppen-Geiger zones, Kottek et al. 2006), `check.rs` (present-day scores vs CHELSA temperature and rainfall, and the agreed pass marks). Soil water (150 mm bucket) and snow live in `model.rs`.
 - `crates/sim`: also `scenario.rs` (Holocene run from 10,000 BCE; present-day check 1931-2010) and `world_context.rs` (data + grids shared by runs). The climate steps on the first day of each month.
 - `viewer/`: plain HTML/CSS/JS, embedded into the binary at compile time. `map.js` draws the map with WebGL2 from a pixel-to-cell lookup image. Views can be linked with `#lat,lon,zoom`.
 - New systems (world, climate, ...) get their own crate under `crates/`.

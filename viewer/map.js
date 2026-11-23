@@ -26,6 +26,27 @@ const WorldMap = (() => {
   const DIFF_STOPS = [ // model minus observed, °C
     [-10, [40, 80, 170]], [-5, [120, 160, 220]], [0, [235, 235, 230]], [5, [235, 150, 110]], [10, [170, 40, 40]],
   ];
+  // Rainfall (mm per year; per month the same colours at a twelfth).
+  const RAIN_STOPS = [
+    [0, [150, 110, 60]], [100, [205, 170, 100]], [250, [225, 215, 150]], [500, [150, 195, 120]],
+    [1000, [70, 160, 120]], [2000, [40, 110, 160]], [4000, [40, 50, 130]],
+  ];
+  // Model rain as a multiple of observed: 100 × log10(model / observed).
+  const RATIO_STOPS = [
+    [-100, [150, 90, 40]], [-30, [215, 175, 110]], [0, [235, 235, 230]], [30, [120, 190, 180]], [100, [30, 100, 120]],
+  ];
+  const SNOW_STOPS = [ // mm of water
+    [0, [70, 68, 62]], [10, [150, 160, 170]], [50, [200, 215, 228]], [200, [235, 242, 250]], [1000, [255, 255, 255]],
+  ];
+  // Köppen-Geiger zones in the order of the server's list: A, BW, BS, C, D, E.
+  const ZONES = [
+    { code: "A", name: "Tropical", color: [40, 110, 200] },
+    { code: "BW", name: "Desert", color: [225, 85, 60] },
+    { code: "BS", name: "Steppe", color: [235, 175, 85] },
+    { code: "C", name: "Temperate", color: [90, 175, 85] },
+    { code: "D", name: "Continental (cold winters)", color: [150, 95, 185] },
+    { code: "E", name: "Polar and alpine", color: [165, 215, 235] },
+  ];
   const NO_VALUE = -32768;
   const BASIN = [104, 134, 128];
   const FLAT = { ocean: [43, 74, 107], land: [139, 139, 90], ice: [232, 238, 243], basin: BASIN };
@@ -53,9 +74,25 @@ const WorldMap = (() => {
     return Math.min(1.35, Math.max(0.55, d));
   }
 
-  // Temperature values for the temperature layer (hundredths of °C per
-  // cell), set from outside; mode "temp" or "diff".
-  const temp = { values: null, mode: "temp", title: "" };
+  // Values for the climate layers, set from outside. mode: "temp" and
+  // "diff" (hundredths of °C), "rain" (mm; `monthly` divides the scale by
+  // 12), "ratio", "snow" (mm) or "zone" (zone index).
+  const temp = { values: null, mode: "temp", title: "", monthly: false, layer: null };
+  const NO_DATA = [70, 68, 62];
+  function fieldColor(c, i, layer) {
+    const v = temp.values && temp.layer === layer ? temp.values[i] : NO_VALUE;
+    if (v === NO_VALUE) return c.kind[i] === 0 ? [30, 40, 52] : NO_DATA;
+    let col;
+    switch (temp.mode) {
+      case "diff": col = ramp(DIFF_STOPS, v / 100); break;
+      case "rain": col = ramp(RAIN_STOPS, temp.monthly ? v * 12 : v); break;
+      case "ratio": col = ramp(RATIO_STOPS, v); break;
+      case "snow": col = ramp(SNOW_STOPS, v); break;
+      case "zone": col = (ZONES[v] ?? { color: NO_DATA }).color; break;
+      default: col = ramp(TEMP_STOPS, v / 100);
+    }
+    return c.kind[i] === 0 ? col.map((x) => x * 0.82) : col.map((x) => x * (0.75 + 0.25 * shade(c.se[i], c.sn[i])));
+  }
 
   const LAYERS = {
     terrain: {
@@ -90,16 +127,33 @@ const WorldMap = (() => {
     },
     temperature: {
       name: "Temperature",
-      color(c, i) {
-        const v = temp.values ? temp.values[i] : NO_VALUE;
-        if (v === NO_VALUE) return c.kind[i] === 0 ? [30, 40, 52] : [70, 68, 62];
-        const col = ramp(temp.mode === "diff" ? DIFF_STOPS : TEMP_STOPS, v / 100);
-        return c.kind[i] === 0 ? col.map((x) => x * 0.82) : col.map((x) => x * (0.75 + 0.25 * shade(c.se[i], c.sn[i])));
-      },
+      color: (c, i) => fieldColor(c, i, "temperature"),
       legend: () => temp.mode === "diff"
         ? rampLegend(temp.title || "Model minus observed (°C)", DIFF_STOPS, ["−10", "−5", "0", "+5", "+10"]) +
-          swatch([70, 68, 62], "No observation")
+          swatch(NO_DATA, "No observation")
         : rampLegend(temp.title || "Temperature (°C)", TEMP_STOPS, ["−40", "−20", "0", "20", "40"]),
+    },
+    rain: {
+      name: "Rainfall",
+      color: (c, i) => fieldColor(c, i, "rain"),
+      legend: () => temp.mode === "ratio"
+        ? rampLegend(temp.title || "Model rain as a multiple of observed", RATIO_STOPS, ["÷10", "÷2", "same", "×2", "×10"]) +
+          swatch(NO_DATA, "No observation")
+        : rampLegend(temp.title || "Rain and snow (mm)", RAIN_STOPS,
+          temp.monthly ? ["0", "40", "170", "330"] : ["0", "500", "2,000", "4,000"]) +
+          (temp.mode === "rain" && temp.title.startsWith("Observed") ? swatch(NO_DATA, "No observation") : ""),
+    },
+    snow: {
+      name: "Snow",
+      color: (c, i) => fieldColor(c, i, "snow"),
+      legend: () => rampLegend(temp.title || "Lying snow (mm of water)", SNOW_STOPS, ["0", "50", "200", "1,000"]),
+    },
+    zone: {
+      name: "Climate zones",
+      color: (c, i) => fieldColor(c, i, "zone"),
+      legend: () => `<div>${temp.title || "Climate zones (Köppen)"}</div>` +
+        ZONES.map((z) => swatch(z.color, `${z.code} · ${z.name}`)).join("") +
+        (temp.title.startsWith("Observed") ? swatch(NO_DATA, "No observation") : ""),
     },
   };
 
@@ -202,6 +256,46 @@ const WorldMap = (() => {
 
     const state = { epoch: 0, layer: "terrain", center: [10, 20], scale: 0 };
 
+    // Wind arrows are drawn on a transparent canvas laid over the map.
+    const overlay = document.createElement("canvas");
+    overlay.className = "map-overlay";
+    canvas.after(overlay);
+    const ctx2d = overlay.getContext("2d");
+    let arrows = null;
+    function drawArrows() {
+      overlay.width = canvas.width; overlay.height = canvas.height;
+      ctx2d.clearRect(0, 0, overlay.width, overlay.height);
+      if (!arrows) return;
+      const dpr = window.devicePixelRatio || 1;
+      // Spacing on screen between drawn arrows: thin them out when zoomed out.
+      const cellDeg = 4; // the wind grid is ~4° apart
+      const every = Math.max(1, Math.round(28 * dpr / (state.scale * cellDeg)));
+      ctx2d.lineWidth = 1.3 * dpr;
+      ctx2d.strokeStyle = "rgba(20, 18, 14, 0.85)";
+      ctx2d.fillStyle = "rgba(20, 18, 14, 0.85)";
+      const len = 2.2 * dpr; // pixels per m/s
+      arrows.forEach(([lat, lon, ue, vn], k) => {
+        if (k % (every * every) !== 0) return;
+        let dlon = lon - state.center[0];
+        dlon = ((dlon + 540) % 360) - 180;
+        const x = overlay.width / 2 + dlon * state.scale;
+        const y = overlay.height / 2 - (lat - state.center[1]) * state.scale;
+        if (x < -20 || y < -20 || x > overlay.width + 20 || y > overlay.height + 20) return;
+        const dx = ue * len, dy = -vn * len, L = Math.hypot(dx, dy);
+        if (L < 1) return;
+        ctx2d.beginPath();
+        ctx2d.moveTo(x - dx / 2, y - dy / 2);
+        ctx2d.lineTo(x + dx / 2, y + dy / 2);
+        ctx2d.stroke();
+        const hx = dx / L, hy = dy / L, h = Math.min(5 * dpr, L * 0.5);
+        ctx2d.beginPath();
+        ctx2d.moveTo(x + dx / 2, y + dy / 2);
+        ctx2d.lineTo(x + dx / 2 - h * hx - h * 0.5 * hy, y + dy / 2 - h * hy + h * 0.5 * hx);
+        ctx2d.lineTo(x + dx / 2 - h * hx + h * 0.5 * hy, y + dy / 2 - h * hy - h * 0.5 * hx);
+        ctx2d.fill();
+      });
+    }
+
     function recolor() {
       const c = epochs[state.epoch], layer = LAYERS[state.layer];
       for (let i = 0; i < n; i++) {
@@ -234,6 +328,7 @@ const WorldMap = (() => {
       gl.uniform2f(u("center"), state.center[0], state.center[1]);
       gl.uniform1f(u("scale"), state.scale);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      drawArrows();
     }
 
     function lonLatAt(clientX, clientY) {
@@ -300,8 +395,8 @@ const WorldMap = (() => {
       return {
         lat, lon, cell: i, kind: c.kind[i], elev: c.elev[i], elevMin: c.elevMin[i], elevMax: c.elevMax[i],
         landShare: c.land[i] / 255, ice: c.ice[i], epochLabel: c.label,
-        temp: state.layer === "temperature" && temp.values && temp.values[i] !== NO_VALUE ? temp.values[i] / 100 : null,
-        tempMode: temp.mode, tempTitle: temp.title,
+        field: temp.layer === state.layer && temp.values && temp.values[i] !== NO_VALUE ? temp.values[i] : null,
+        fieldMode: temp.mode, fieldTitle: temp.title,
       };
     }
 
@@ -327,11 +422,14 @@ const WorldMap = (() => {
       epoch() { return state.epoch; },
       setLayer(id) { state.layer = id; recolor(); },
       layer() { return state.layer; },
-      /// values: Int16Array of hundredths of °C per cell; mode "temp" or "diff".
-      setTemperature(values, mode, title) {
-        temp.values = values; temp.mode = mode; temp.title = title;
-        if (state.layer === "temperature") recolor();
+      /// values: Int16Array per cell for `layer`; see `temp` for modes.
+      setField(layer, values, mode, title, monthly) {
+        Object.assign(temp, { layer, values, mode, title, monthly: !!monthly });
+        if (state.layer === layer) recolor();
       },
+      /// Wind arrows: [[lat, lon, east m/s, north m/s], ...] or null.
+      setArrows(list) { arrows = list; drawArrows(); },
+      zones: ZONES,
       legendHtml() { return LAYERS[state.layer].legend(); },
     };
   }

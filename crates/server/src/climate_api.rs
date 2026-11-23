@@ -1,5 +1,6 @@
-//! Climate data for the viewer: temperature maps, a place's climate chart,
-//! the world temperature history and the present-day check scores.
+//! Climate data for the viewer: maps of temperature, rainfall, snow and
+//! climate zones, the winds, a place's climate chart, the world temperature
+//! history and the present-day check scores.
 
 use axum::body::Bytes;
 use axum::extract::{Query, State};
@@ -15,6 +16,8 @@ const NO_VALUE: i16 = i16::MIN;
 
 #[derive(Deserialize)]
 pub struct MapQuery {
+    /// "temperature" (default), "rain", "snow" or "zone".
+    field: Option<String>,
     /// "current", "normal", "observed" or "difference".
     view: String,
     /// 0-11; absent for the annual mean.
@@ -33,12 +36,16 @@ fn encode(values: impl Iterator<Item = Option<f32>>) -> Bytes {
     Bytes::from(out)
 }
 
+/// Cells compared with observations: at least half land today.
+fn compared_land(world: &sim::WorldContext) -> &[u8] {
+    &world.data.epochs[world.epoch_for_year(2000)].land_share
+}
+
 /// Observed 1981-2010 temperature per map cell for a month (or the year),
 /// on land only (cells at least half land today): the agreed comparison.
 fn observed(world: &sim::WorldContext, month: Option<usize>) -> Vec<Option<f32>> {
     let mut out = vec![None; world.map_grid.len()];
-    let today = world.epoch_for_year(2000);
-    let land = &world.data.epochs[today].land_share;
+    let land = compared_land(world);
     if let Some(obs) = &world.data.observed_temperature {
         for (k, &cell) in obs.cells.iter().enumerate() {
             if land[cell as usize] < 128 {
@@ -54,39 +61,147 @@ fn observed(world: &sim::WorldContext, month: Option<usize>) -> Vec<Option<f32>>
     out
 }
 
-/// Per map cell, i16 little-endian, hundredths of °C; -32768 = no value.
+/// Observed 1981-2010 rainfall (mm) per map cell, for a month or the year
+/// total, on land.
+fn observed_rain(world: &sim::WorldContext, month: Option<usize>) -> Vec<Option<f32>> {
+    let mut out = vec![None; world.map_grid.len()];
+    let land = compared_land(world);
+    if let Some(obs) = &world.data.observed_precipitation {
+        for (k, &cell) in obs.cells.iter().enumerate() {
+            if land[cell as usize] < 128 {
+                continue;
+            }
+            let row = &obs.monthly_mm[k * 12..k * 12 + 12];
+            out[cell as usize] = Some(match month {
+                Some(m) => row[m],
+                None => row.iter().sum(),
+            });
+        }
+    }
+    out
+}
+
+/// Climate zone (index into `climate::koppen::Zone::ALL`) of the
+/// observations per map cell, on land.
+fn observed_zones(world: &sim::WorldContext, northern: &[bool]) -> Vec<Option<f32>> {
+    let mut out = vec![None; world.map_grid.len()];
+    let land = compared_land(world);
+    let (Some(ot), Some(op)) = (
+        &world.data.observed_temperature,
+        &world.data.observed_precipitation,
+    ) else {
+        return out;
+    };
+    let rain: std::collections::HashMap<u32, usize> =
+        op.cells.iter().enumerate().map(|(k, &c)| (c, k)).collect();
+    for (k, &cell) in ot.cells.iter().enumerate() {
+        let c = cell as usize;
+        let Some(&kp) = rain.get(&cell) else { continue };
+        if land[c] < 128 {
+            continue;
+        }
+        let t: [f32; 12] = ot.monthly_c[k * 12..k * 12 + 12].try_into().unwrap();
+        let p: [f32; 12] = op.monthly_mm[kp * 12..kp * 12 + 12].try_into().unwrap();
+        out[c] = Some(climate::koppen::classify(&t, &p, northern[c]).index() as f32);
+    }
+    out
+}
+
+fn northern(world: &sim::WorldContext) -> Vec<bool> {
+    world
+        .map_grid
+        .centers
+        .iter()
+        .map(|&c| c[2] >= 0.0)
+        .collect()
+}
+
+/// Per map cell, i16 little-endian; -32768 = no value. Temperature in
+/// hundredths of °C; rain and snow in mm (rain differences as 100 ×
+/// log10(model / observed)); zones as the zone's index.
 pub async fn get_map(
     State(shared): State<AppState>,
     Query(q): Query<MapQuery>,
 ) -> impl IntoResponse {
     let month = q.month.filter(|&m| m < 12);
+    let field = q.field.as_deref().unwrap_or("temperature");
     let bytes = {
         let sim = shared.sim.lock().unwrap();
         let c = &sim.climate;
-        match q.view.as_str() {
-            "current" => encode(c.map_current().into_iter().map(Some)),
-            "observed" => encode(observed(&shared.world, month).into_iter()),
-            "difference" => {
-                let obs = observed(&shared.world, month);
-                let n = obs.len();
-                let model: Vec<Option<f32>> = (0..n)
-                    .map(|i| {
-                        c.cell_window(i).map(|row| {
-                            month
-                                .map(|m| row[m])
-                                .unwrap_or(row.iter().sum::<f32>() / 12.0)
-                        })
-                    })
-                    .collect();
-                encode((0..n).map(|i| match (model[i], obs[i]) {
-                    (Some(m), Some(o)) => Some(m - o),
-                    _ => None,
-                }))
+        let window = sim.scenario.comparison_window().is_some() && c.window_years() > 0;
+        let pick = |row: [f32; 12], total: bool| match month {
+            Some(m) => row[m],
+            None if total => row.iter().sum(),
+            None => row.iter().sum::<f32>() / 12.0,
+        };
+        let world = &shared.world;
+        let n = world.map_grid.len();
+        match (field, q.view.as_str()) {
+            ("rain", "current") => encode_scaled(c.map_precip_current().into_iter().map(Some), 1.0),
+            ("rain", "observed") => encode_scaled(observed_rain(world, month).into_iter(), 1.0),
+            ("rain", "difference") => {
+                let obs = observed_rain(world, month);
+                encode_scaled(
+                    (0..n).map(|i| {
+                        let m = c.cell_precip_window(i).map(|r| pick(r, true))?;
+                        let o = obs[i]?;
+                        Some(100.0 * ((m.max(1.0)) / o.max(1.0)).log10())
+                    }),
+                    1.0,
+                )
+            }
+            ("rain", _) => encode_scaled(c.map_precip(month).into_iter().map(Some), 1.0),
+            ("snow", "current") => encode_scaled(c.map_snow_current().into_iter().map(Some), 1.0),
+            ("snow", _) => encode_scaled(c.map_snow(month).into_iter().map(Some), 1.0),
+            ("zone", "observed") => {
+                encode_scaled(observed_zones(world, &northern(world)).into_iter(), 1.0)
+            }
+            ("zone", _) => encode_scaled(
+                c.map_zones(window, &northern(world))
+                    .into_iter()
+                    .map(|z| z.map(|z| z.index() as f32)),
+                1.0,
+            ),
+            (_, "current") => encode(c.map_current().into_iter().map(Some)),
+            (_, "observed") => encode(observed(world, month).into_iter()),
+            (_, "difference") => {
+                let obs = observed(world, month);
+                encode((0..n).map(
+                    |i| match (c.cell_window(i).map(|r| pick(r, false)), obs[i]) {
+                        (Some(m), Some(o)) => Some(m - o),
+                        _ => None,
+                    },
+                ))
             }
             _ => encode(c.map_normal(month).into_iter().map(Some)),
         }
     };
     ([(header::CONTENT_TYPE, "application/octet-stream")], bytes)
+}
+
+/// Like `encode` but values are multiplied by `scale` (not 100).
+fn encode_scaled(values: impl Iterator<Item = Option<f32>>, scale: f32) -> Bytes {
+    encode(values.map(|v| v.map(|x| x * scale / 100.0)))
+}
+
+/// This month's winds: per coarse cell [lat, lon, east m/s, north m/s].
+pub async fn get_winds(State(shared): State<AppState>) -> Json<serde_json::Value> {
+    let sim = shared.sim.lock().unwrap();
+    let w: Vec<[f32; 4]> = sim
+        .climate
+        .atmosphere
+        .winds()
+        .into_iter()
+        .map(|(a, b, u, v)| {
+            [
+                a as f32,
+                b as f32,
+                (u * 10.0).round() as f32 / 10.0,
+                (v * 10.0).round() as f32 / 10.0,
+            ]
+        })
+        .collect();
+    Json(serde_json::json!({ "winds": w }))
 }
 
 #[derive(Deserialize)]
@@ -102,24 +217,41 @@ pub async fn get_cell(
     if q.cell >= shared.world.map_grid.len() {
         return Json(serde_json::json!({ "error": "no such cell" }));
     }
-    let land = &shared.world.data.epochs[shared.world.epoch_for_year(2000)].land_share;
-    let observed = shared
-        .world
-        .data
+    let land = compared_land(&shared.world);
+    let compare = sim.scenario.comparison_window().is_some() && land[q.cell] >= 128;
+    let find = |cells: &[u32]| cells.iter().position(|&c| c as usize == q.cell);
+    let data = &shared.world.data;
+    let observed = data
         .observed_temperature
         .as_ref()
-        .filter(|_| land[q.cell] >= 128)
-        .and_then(|obs| {
-            obs.cells
-                .iter()
-                .position(|&c| c as usize == q.cell)
-                .map(|k| obs.monthly_c[k * 12..k * 12 + 12].to_vec())
-        });
+        .filter(|_| compare)
+        .and_then(|o| find(&o.cells).map(|k| o.monthly_c[k * 12..k * 12 + 12].to_vec()));
+    let observed_rain = data
+        .observed_precipitation
+        .as_ref()
+        .filter(|_| compare)
+        .and_then(|o| find(&o.cells).map(|k| o.monthly_mm[k * 12..k * 12 + 12].to_vec()));
+    let northern = shared.world.map_grid.centers[q.cell][2] >= 0.0;
+    let c = &sim.climate;
+    let zone = |t: Option<[f32; 12]>, p: Option<[f32; 12]>| {
+        Some(climate::koppen::classify(&t?, &p?, northern).code())
+    };
+    let window = c.cell_window(q.cell);
+    let window_rain = c.cell_precip_window(q.cell);
+    let years = c.years_simulated();
+    let as12 = |v: &Option<Vec<f32>>| v.as_ref().map(|v| <[f32; 12]>::try_from(&v[..]).unwrap());
     Json(serde_json::json!({
-        "normal": sim.climate.cell_normal(q.cell),
-        "window": sim.climate.cell_window(q.cell),
-        "observed": if sim.scenario.comparison_window().is_some() { observed } else { None },
-        "years": sim.climate.years_simulated(),
+        "normal": c.cell_normal(q.cell),
+        "window": window,
+        "observed": observed,
+        "rain_normal": c.cell_precip_normal(q.cell),
+        "rain_window": window_rain,
+        "rain_observed": observed_rain,
+        "snow_normal": c.cell_snow_normal(q.cell),
+        "zone": if years > 0 { zone(Some(c.cell_normal(q.cell)), Some(c.cell_precip_normal(q.cell))) } else { None },
+        "zone_window": zone(window, window_rain),
+        "zone_observed": zone(as12(&observed), as12(&observed_rain)),
+        "years": years,
     }))
 }
 
@@ -156,13 +288,27 @@ pub async fn get_check(State(shared): State<AppState>) -> Json<serde_json::Value
                 &shared.world.data.epochs[sim.epoch].land_share,
             )
         });
+    let rain = (|| {
+        sim.scenario.comparison_window()?;
+        climate::check::rain_scores(
+            &sim.climate,
+            shared.world.data.observed_temperature.as_ref()?,
+            shared.world.data.observed_precipitation.as_ref()?,
+            &shared.world.map_grid,
+            &shared.world.data.epochs[sim.epoch].land_share,
+        )
+    })();
     Json(serde_json::json!({
         "window": sim.scenario.comparison_window(),
         "scores": scores,
+        "rain": rain,
+        "zones": climate::koppen::Zone::ALL.iter().map(|z| z.code()).collect::<Vec<_>>(),
         "pass_marks": {
             "global_mean_c": climate::check::PASS_GLOBAL_MEAN_C,
             "annual_typical_error_c": climate::check::PASS_ANNUAL_TYPICAL_ERROR_C,
             "seasonal_swing_error_c": climate::check::PASS_SEASONAL_SWING_ERROR_C,
+            "rain_correlation": climate::check::PASS_RAIN_CORRELATION,
+            "zone_agreement": climate::check::PASS_ZONE_AGREEMENT,
         },
         "observed_global_mean_c": climate::check::OBSERVED_GLOBAL_MEAN_C,
         "observed_global_uncertainty_c": climate::check::OBSERVED_GLOBAL_MEAN_UNCERTAINTY_C,

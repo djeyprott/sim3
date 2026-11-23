@@ -6,10 +6,13 @@
 //! ocean, variability and ice. Runs once per simulated month on the 40,962
 //! cells of the climate grid; see `docs/design.md` and the Phase 1 plan.
 
+pub mod atmosphere;
 pub mod check;
+pub mod koppen;
 pub mod model;
 pub mod orbit;
 pub mod solver;
 
+pub use atmosphere::{AtmosphereTuning, ATMOSPHERE_TUNED};
 pub use model::{Climate, Tuning, TUNED};
 pub use orbit::Orbit;
