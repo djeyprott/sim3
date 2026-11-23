@@ -13,6 +13,9 @@
 //! - `OBST`: observed 1981-2010 monthly mean temperature (CHELSA V2.1) for
 //!   mostly-land cells: u32 count, u32[count] cell indices, i16[count * 12]
 //!   in hundredths of °C, 12 months per cell.
+//! - `OBSP`: observed 1981-2010 monthly precipitation (CHELSA V2.1) for
+//!   mostly-land cells: u32 count, u32[count] cell indices, u16[count * 12]
+//!   in tenths of mm per month.
 //! - `CO2 `: ice-core CO2 (Bereiter et al. 2015): u32 count, then f32 pairs
 //!   (years before 1950, ppm), oldest last.
 //! - `CO2P`: f32, mean Mauna Loa CO2 1981-2010 (ppm).
@@ -37,6 +40,12 @@ pub struct ObservedTemperature {
     pub monthly_c: Vec<f32>,
 }
 
+pub struct ObservedPrecipitation {
+    pub cells: Vec<u32>,
+    /// mm per month, 12 values per cell in `cells` order.
+    pub monthly_mm: Vec<f32>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitRow {
     pub kyr: f32,
@@ -50,6 +59,7 @@ pub struct WorldData {
     pub cells: usize,
     pub epochs: Vec<Epoch>,
     pub observed_temperature: Option<ObservedTemperature>,
+    pub observed_precipitation: Option<ObservedPrecipitation>,
     /// (years before 1950, ppm), sorted by age.
     pub co2_record: Vec<(f32, f32)>,
     pub co2_1981_2010_ppm: Option<f32>,
@@ -154,6 +164,7 @@ impl WorldData {
             cells,
             epochs,
             observed_temperature: None,
+            observed_precipitation: None,
             co2_record: Vec::new(),
             co2_1981_2010_ppm: None,
             orbit: Vec::new(),
@@ -175,6 +186,16 @@ impl WorldData {
                         .map(|v| v as f32 / 100.0)
                         .collect();
                     out.observed_temperature = Some(ObservedTemperature { cells, monthly_c });
+                }
+                b"OBSP" => {
+                    let n = s.u32()? as usize;
+                    let cells = s.u32s(n)?;
+                    let monthly_mm = s
+                        .u16s(n * 12)?
+                        .into_iter()
+                        .map(|v| v as f32 / 10.0)
+                        .collect();
+                    out.observed_precipitation = Some(ObservedPrecipitation { cells, monthly_mm });
                 }
                 b"CO2 " => {
                     let n = s.u32()? as usize;
@@ -216,6 +237,7 @@ mod tests {
         };
         let d = WorldData::parse(&bytes).unwrap();
         assert!(d.observed_temperature.is_some());
+        assert!(d.observed_precipitation.is_some());
         assert_eq!(d.orbit.len(), 16);
         assert!(d.co2_record.len() > 50);
         assert!(d.co2_1981_2010_ppm.unwrap() > 300.0);

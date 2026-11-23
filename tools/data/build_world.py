@@ -14,6 +14,8 @@ Inputs (downloaded by the workflow):
   chelsa_tas_MM.tif (MM = 01..12)
                  CHELSA V2.1 monthly mean near-surface air temperature,
                  1981-2010, 30 arc-seconds (Karger et al. 2017; v2.1 2021)
+  chelsa_pr_MM.tif (MM = 01..12)
+                 CHELSA V2.1 monthly precipitation, 1981-2010, 30 arc-seconds
   orbit91        Berger & Loutre (1991) orbital parameters, 1 kyr steps
   co2_composite.txt
                  Antarctic ice-core CO2 composite (Bereiter et al. 2015)
@@ -113,8 +115,8 @@ def sample(interp, lat, lon):
     return interp(np.stack([lat, np.mod(lon, 360.0)], axis=-1))
 
 
-def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, chelsa_pattern, orbit_path, co2_path, mlo_path,
-         out_path, report_path):
+def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, chelsa_pattern, chelsa_pr_pattern, orbit_path,
+         co2_path, mlo_path, out_path, report_path):
     lat_c, lon_c, area = load_grid(grid_path)
     n = lat_c.size
     print(f"{n} cells", flush=True)
@@ -235,10 +237,17 @@ def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, chelsa_pattern,
 
         # Observations are compared on land only (cells at least half land
         # today), so only those are kept; this also keeps the file small.
-        obs_cells, obs_t = observed_temperature(chelsa_pattern, tree, n, land_now / sum_w >= 0.5)
+        obs_cells, obs_t, _ = observed_field(chelsa_pattern, tree, n, land_now / sum_w >= 0.5, zero_is_missing=True)
         report["observed_temperature_cells"] = int(obs_cells.size)
         section(f, b"OBST", [np.array([obs_cells.size], "<u4"), obs_cells.astype("<u4"),
                              np.clip(np.rint(obs_t * 100), -32768, 32767).astype("<i2")])
+        # Precipitation: zero is a real value (deserts), only 65535 is missing.
+        pr_cells, pr, pr_scale = observed_field(chelsa_pr_pattern, tree, n, land_now / sum_w >= 0.5, zero_is_missing=False)
+        report["observed_precipitation_cells"] = int(pr_cells.size)
+        report["precipitation_file_scale"] = pr_scale
+        report["precipitation_mm_month_range"] = [float(pr.min()), float(pr.max())]
+        section(f, b"OBSP", [np.array([pr_cells.size], "<u4"), pr_cells.astype("<u4"),
+                             np.clip(np.rint(pr * 10), 0, 65535).astype("<u2")])
         co2 = read_co2(co2_path)
         section(f, b"CO2 ", [np.array([len(co2)], "<u4"), np.array(co2, "<f4")])
         co2_now = read_mlo_mean(mlo_path, 1981, 2010)
@@ -259,9 +268,11 @@ def section(f, tag, arrays):
     f.write(payload)
 
 
-def observed_temperature(pattern, tree, n, keep_mask):
-    """CHELSA 1981-2010 monthly mean temperature (deg C) averaged over each
-    map cell, for cells in `keep_mask` that CHELSA covers at least half of.
+def observed_field(pattern, tree, n, keep_mask, zero_is_missing):
+    """A CHELSA 1981-2010 monthly field (temperature in deg C, or
+    precipitation in kg/m2 = mm per month) averaged over each map cell, for
+    cells in `keep_mask` that CHELSA covers at least half of. Returns
+    (cells, values cells x 12 flattened, file scale).
 
     CHELSA is 30 arc-seconds; each 2x2 block of pixels is assigned to the
     cell containing the block's centre (blocks are ~1.8 km, cells ~28 km).
@@ -291,7 +302,7 @@ def observed_temperature(pattern, tree, n, keep_mask):
         valid = None
         for m, fm in enumerate(files):
             raw = fm.read(1, window=Window(0, r0, cols, nr)).ravel()
-            ok = (raw > 0) & (raw < 65535)  # 0 and 65535 mark no data (sea)
+            ok = (raw < 65535) & ((raw > 0) if zero_is_missing else True)
             if valid is None:
                 valid = ok
                 wsum += np.bincount(idx[ok], w[ok], n)
@@ -303,8 +314,8 @@ def observed_temperature(pattern, tree, n, keep_mask):
     # Cells mostly covered by CHELSA; for cells partly outside its coverage
     # (north of 84 N there is none), wall undercounts, which is fine.
     keep = np.flatnonzero((wall > 0) & (wsum >= 0.5 * wall) & keep_mask)
-    temps = (sums[:, keep] / wsum[keep]).T  # cells x 12
-    return keep, temps.ravel()
+    vals = (sums[:, keep] / wsum[keep]).T  # cells x 12
+    return keep, vals.ravel(), float(scale)
 
 
 def read_co2(path):
