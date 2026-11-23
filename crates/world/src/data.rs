@@ -7,6 +7,18 @@
 //! i16[n] mean elevation (m), i16[n] lowest point (m), i16[n] highest point
 //! (m), u8[n] share of the cell above sea level (0-255 = 0-1), u16[n] mean
 //! ice thickness (m). Elevations are relative to sea level at that time.
+//!
+//! Format version 2 adds tagged sections after the epochs (4-byte tag, u32
+//! byte length, payload):
+//! - `OBST`: observed 1981-2010 monthly mean temperature (CHELSA V2.1) for
+//!   mostly-land cells: u32 count, u32[count] cell indices, i16[count * 12]
+//!   in hundredths of °C, 12 months per cell.
+//! - `CO2 `: ice-core CO2 (Bereiter et al. 2015): u32 count, then f32 pairs
+//!   (years before 1950, ppm), oldest last.
+//! - `CO2P`: f32, mean Mauna Loa CO2 1981-2010 (ppm).
+//! - `ORBT`: Berger & Loutre (1991) orbit: u32 count, then f32 quads (kyr
+//!   relative to 1950, eccentricity, longitude of perihelion from the
+//!   northern spring equinox in degrees, obliquity in degrees).
 
 pub struct Epoch {
     /// Astronomical year (-9999 = 10,000 BCE).
@@ -19,10 +31,29 @@ pub struct Epoch {
     pub ice_thickness_m: Vec<u16>,
 }
 
+pub struct ObservedTemperature {
+    pub cells: Vec<u32>,
+    /// °C, 12 values per cell in `cells` order.
+    pub monthly_c: Vec<f32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct OrbitRow {
+    pub kyr: f32,
+    pub eccentricity: f32,
+    pub perihelion_deg: f32,
+    pub obliquity_deg: f32,
+}
+
 pub struct WorldData {
     pub grid_level: u32,
     pub cells: usize,
     pub epochs: Vec<Epoch>,
+    pub observed_temperature: Option<ObservedTemperature>,
+    /// (years before 1950, ppm), sorted by age.
+    pub co2_record: Vec<(f32, f32)>,
+    pub co2_1981_2010_ppm: Option<f32>,
+    pub orbit: Vec<OrbitRow>,
 }
 
 #[derive(Debug)]
@@ -62,6 +93,24 @@ impl<'a> Reader<'a> {
             .map(|c| i16::from_le_bytes(*c))
             .collect())
     }
+    fn f32s(&mut self, n: usize) -> Result<Vec<f32>, FormatError> {
+        Ok(self
+            .take(n * 4)?
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
+            .collect())
+    }
+    fn u32s(&mut self, n: usize) -> Result<Vec<u32>, FormatError> {
+        Ok(self
+            .take(n * 4)?
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_le_bytes(*c))
+            .collect())
+    }
     fn u16s(&mut self, n: usize) -> Result<Vec<u16>, FormatError> {
         Ok(self
             .take(n * 2)?
@@ -80,7 +129,7 @@ impl WorldData {
             return Err(FormatError("not a sim3 world file".into()));
         }
         let version = r.u32()?;
-        if version != 1 {
+        if version != 1 && version != 2 {
             return Err(FormatError(format!("unsupported format version {version}")));
         }
         let grid_level = r.u32()?;
@@ -100,10 +149,73 @@ impl WorldData {
                 ice_thickness_m: r.u16s(cells)?,
             });
         }
-        Ok(WorldData {
+        let mut out = WorldData {
             grid_level,
             cells,
             epochs,
-        })
+            observed_temperature: None,
+            co2_record: Vec::new(),
+            co2_1981_2010_ppm: None,
+            orbit: Vec::new(),
+        };
+        while r.pos < bytes.len() {
+            let tag: [u8; 4] = r.take(4)?.try_into().unwrap();
+            let len = r.u32()? as usize;
+            let mut s = Reader {
+                bytes: r.take(len)?,
+                pos: 0,
+            };
+            match &tag {
+                b"OBST" => {
+                    let n = s.u32()? as usize;
+                    let cells = s.u32s(n)?;
+                    let monthly_c = s
+                        .i16s(n * 12)?
+                        .into_iter()
+                        .map(|v| v as f32 / 100.0)
+                        .collect();
+                    out.observed_temperature = Some(ObservedTemperature { cells, monthly_c });
+                }
+                b"CO2 " => {
+                    let n = s.u32()? as usize;
+                    let v = s.f32s(n * 2)?;
+                    out.co2_record = v.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+                }
+                b"CO2P" => out.co2_1981_2010_ppm = Some(s.f32s(1)?[0]),
+                b"ORBT" => {
+                    let n = s.u32()? as usize;
+                    let v = s.f32s(n * 4)?;
+                    out.orbit = v
+                        .chunks_exact(4)
+                        .map(|q| OrbitRow {
+                            kyr: q[0],
+                            eccentricity: q[1],
+                            perihelion_deg: q[2],
+                            obliquity_deg: q[3],
+                        })
+                        .collect();
+                }
+                _ => {} // unknown sections are skipped, so older programs can read newer files
+            }
+        }
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_synthetic_test_file_sections() {
+        // Built by tools/data/build_world.py from synthetic inputs, if present.
+        let Ok(bytes) = std::fs::read("/tmp/dtest/world.bin") else {
+            return;
+        };
+        let d = WorldData::parse(&bytes).unwrap();
+        assert!(d.observed_temperature.is_some());
+        assert_eq!(d.orbit.len(), 16);
+        assert!(d.co2_record.len() > 50);
+        assert!(d.co2_1981_2010_ppm.unwrap() > 300.0);
     }
 }

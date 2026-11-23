@@ -233,7 +233,9 @@ def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, chelsa_pattern,
             frac_u8(land).tofile(f)
             u16(ice).tofile(f)
 
-        obs_cells, obs_t = observed_temperature(chelsa_pattern, tree, n)
+        # Observations are compared on land only (cells at least half land
+        # today), so only those are kept; this also keeps the file small.
+        obs_cells, obs_t = observed_temperature(chelsa_pattern, tree, n, land_now / sum_w >= 0.5)
         report["observed_temperature_cells"] = int(obs_cells.size)
         section(f, b"OBST", [np.array([obs_cells.size], "<u4"), obs_cells.astype("<u4"),
                              np.clip(np.rint(obs_t * 100), -32768, 32767).astype("<i2")])
@@ -257,9 +259,9 @@ def section(f, tag, arrays):
     f.write(payload)
 
 
-def observed_temperature(pattern, tree, n):
+def observed_temperature(pattern, tree, n, keep_mask):
     """CHELSA 1981-2010 monthly mean temperature (deg C) averaged over each
-    map cell's land, for cells where CHELSA covers at least half the cell.
+    map cell, for cells in `keep_mask` that CHELSA covers at least half of.
 
     CHELSA is 30 arc-seconds; each 2x2 block of pixels is assigned to the
     cell containing the block's centre (blocks are ~1.8 km, cells ~28 km).
@@ -300,7 +302,7 @@ def observed_temperature(pattern, tree, n):
         fm.close()
     # Cells mostly covered by CHELSA; for cells partly outside its coverage
     # (north of 84 N there is none), wall undercounts, which is fine.
-    keep = np.flatnonzero((wall > 0) & (wsum >= 0.5 * wall))
+    keep = np.flatnonzero((wall > 0) & (wsum >= 0.5 * wall) & keep_mask)
     temps = (sums[:, keep] / wsum[keep]).T  # cells x 12
     return keep, temps.ravel()
 
