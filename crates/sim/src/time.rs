@@ -93,6 +93,17 @@ impl Date {
         civil_from_days(start_days() + tick as i64)
     }
 
+    /// Days from 1 January of `start_year` to this date (0 if before).
+    pub fn days_since_new_year(self, start_year: i64) -> Tick {
+        (days_from_civil(self.year, self.month, self.day) - days_from_civil(start_year, 1, 1))
+            .max(0) as Tick
+    }
+
+    /// The date `days` days after 1 January of astronomical year `start_year`.
+    pub fn days_after_new_year(start_year: i64, days: Tick) -> Self {
+        civil_from_days(days_from_civil(start_year, 1, 1) + days as i64)
+    }
+
     /// The tick on which this date falls. Dates before the start clamp to 0.
     pub fn to_tick(self) -> Tick {
         (days_from_civil(self.year, self.month, self.day) - start_days()).max(0) as Tick

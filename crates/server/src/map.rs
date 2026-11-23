@@ -3,12 +3,12 @@
 
 use axum::body::Bytes;
 use serde::Serialize;
-use world::data::WorldData;
+
 use world::grid::{from_lat_lon, Grid};
 use world::terrain::{slopes, Terrain};
 
 /// The world data file, built by .github/workflows/data.yml (see build.rs).
-const WORLD_DATA: &[u8] =
+pub const WORLD_DATA: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/world.bin"));
 
 /// Size of the lookup image that tells the browser which cell each map pixel
@@ -45,14 +45,14 @@ pub struct MapData {
 }
 
 impl MapData {
-    pub fn build() -> MapData {
-        let data = WorldData::parse(WORLD_DATA).expect("embedded world data is valid");
-        let grid = Grid::new(data.grid_level);
+    pub fn build(world: &sim::WorldContext) -> MapData {
+        let data = &world.data;
+        let grid = &world.map_grid;
 
         let mut epochs = Vec::new();
         let mut cell_blobs = Vec::new();
         for (index, epoch) in data.epochs.iter().enumerate() {
-            let terrain = Terrain::new(&grid, epoch);
+            let terrain = Terrain::new(grid, epoch);
             epochs.push(EpochInfo {
                 index,
                 year: epoch.year,
@@ -61,9 +61,9 @@ impl MapData {
                 } else {
                     "Today".to_string()
                 },
-                land_share_of_earth: Terrain::land_share_of_earth(&grid, epoch),
+                land_share_of_earth: Terrain::land_share_of_earth(grid, epoch),
             });
-            cell_blobs.push(Bytes::from(cell_blob(&grid, epoch, &terrain)));
+            cell_blobs.push(Bytes::from(cell_blob(grid, epoch, &terrain)));
         }
 
         MapData {
@@ -74,7 +74,7 @@ impl MapData {
                 epochs,
             },
             cell_blobs,
-            raster: Bytes::from(raster(&grid)),
+            raster: Bytes::from(raster(grid)),
         }
     }
 }
@@ -127,6 +127,7 @@ fn raster(grid: &Grid) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use world::data::WorldData;
     use world::terrain::Surface;
 
     fn setup() -> (Grid, WorldData) {

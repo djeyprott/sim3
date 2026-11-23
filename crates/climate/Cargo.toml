@@ -1,0 +1,10 @@
+[package]
+name = "climate"
+description = "Sunlight, temperature and (later) the rest of the climate, on the 110 km climate grid."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+world = { path = "../world" }
+serde.workspace = true

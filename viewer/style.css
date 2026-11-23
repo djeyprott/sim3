@@ -16,7 +16,8 @@ body { display: flex; flex-direction: column; }
 header {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 16px;
+  white-space: nowrap;
   padding: 8px 16px;
   border-bottom: 1px solid var(--line);
 }
@@ -79,3 +80,26 @@ button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent);
 #events { list-style: none; padding: 0; margin: 0; font-size: 14px; }
 #events li { padding: 6px 0; border-bottom: 1px solid var(--line); }
 #events .when { display: block; color: var(--muted); font-size: 12px; }
+
+.map-options select { font-size: 13px; padding: 2px 6px; }
+.chart-panel { top: 52px; right: 12px; width: 360px; }
+.chart-panel.world { top: auto; bottom: 150px; right: 12px; width: 420px; }
+.chart-panel .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.chart-panel .head button { padding: 0 6px; font-size: 13px; }
+.chart-panel svg { display: block; width: 100%; height: auto; }
+.chart-panel svg text { fill: var(--muted); font-size: 10px; font-family: Georgia, serif; }
+.chart-panel .key { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.chart-panel .key span::before { content: ""; display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 4px; background: currentColor; }
+.chart-panel .key .obs { color: #8fb3d9; }
+.chart-panel .key .model { color: var(--accent); }
+.check { margin-bottom: 20px; font-size: 14px; }
+.check table { width: 100%; border-collapse: collapse; }
+.check td { padding: 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.check td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 8px; }
+.check .pass { color: #8fb573; }
+.check .fail { color: #d0705a; }
+.check .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.rate { color: var(--muted); font-size: 12px; width: 10.5em; }
+header button, header select, header label { white-space: nowrap; }
+.run { margin-left: 4px; display: flex; gap: 6px; align-items: center; color: var(--muted); }
+.run select { max-width: 13em; }

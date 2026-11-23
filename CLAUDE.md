@@ -22,8 +22,18 @@ A human history simulator starting around 10,000 BCE on Earth's real terrain. Th
 - `crates/sim`: simulation core, time (`time.rs`; one tick = one day; proleptic Gregorian calendar; astronomical year numbering internally, BCE/CE only for display). Systems run at their own cadence (daily, seasonal, yearly), not all every day.
 - `crates/server`: the `sim3` binary. Runs the simulation on a background thread and serves the viewer on 127.0.0.1:7340.
 - `crates/world`: geodesic grid (`grid.rs`; map grid level 8 = 655,362 cells, climate grid level 6 = 40,962 cells; indices stable across levels), world data file parsing (`data.rs`), sea/land/inland-basin classification (`terrain.rs`). `gridgen` binary exports cell centres for the data pipeline.
+- `crates/climate`: monthly climate on the 40,962-cell climate grid. `orbit.rs` (Berger & Loutre 1991 table, Berger 1978 insolation, monthly sunshine table), `model.rs` (energy balance solved for sea-level-equivalent temperature; surface = minus 6.5 °C/km; physical constants with sources; the only tuned values are in `TUNED`), `solver.rs` (implicit transport on the level-4 grid + energy-conserving local exchange), `check.rs` (present-day scores vs CHELSA and the agreed pass marks).
+- `crates/sim`: also `scenario.rs` (Holocene run from 10,000 BCE; present-day check 1931-2010) and `world_context.rs` (data + grids shared by runs). The climate steps on the first day of each month.
 - `viewer/`: plain HTML/CSS/JS, embedded into the binary at compile time. `map.js` draws the map with WebGL2 from a pixel-to-cell lookup image. Views can be linked with `#lat,lon,zoom`.
 - New systems (world, climate, ...) get their own crate under `crates/`.
+
+## Performance budget
+
+Human history is the focus. Climate gets at most ~10% of simulation time; measure at every step (`cargo test -p sim --release --test present_day profile_speed -- --ignored --nocapture`) and simplify climate rather than slow history. The viewer header shows measured years/sec.
+
+## Tuning
+
+Values a model can't derive are tuned once against today's observations, never the past. Re-tune with `cargo test -p sim --release --test present_day tune -- --ignored --nocapture` when the climate model changes, and record the result in `climate::model::TUNED`.
 
 ## World data
 

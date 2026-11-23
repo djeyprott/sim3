@@ -19,6 +19,14 @@ const WorldMap = (() => {
   const ICE_STOPS = [ // ice thickness (m) -> colour
     [0, [226, 236, 242]], [1000, [188, 214, 232]], [2500, [132, 176, 214]], [4000, [80, 132, 190]],
   ];
+  const TEMP_STOPS = [ // °C -> colour
+    [-40, [70, 40, 110]], [-25, [60, 80, 170]], [-10, [100, 150, 210]], [0, [205, 228, 236]],
+    [10, [150, 200, 120]], [20, [240, 205, 90]], [30, [220, 100, 50]], [40, [130, 20, 30]],
+  ];
+  const DIFF_STOPS = [ // model minus observed, °C
+    [-10, [40, 80, 170]], [-5, [120, 160, 220]], [0, [235, 235, 230]], [5, [235, 150, 110]], [10, [170, 40, 40]],
+  ];
+  const NO_VALUE = -32768;
   const BASIN = [104, 134, 128];
   const FLAT = { ocean: [43, 74, 107], land: [139, 139, 90], ice: [232, 238, 243], basin: BASIN };
 
@@ -44,6 +52,10 @@ const WorldMap = (() => {
     const d = (nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]) / len / LIGHT[2];
     return Math.min(1.35, Math.max(0.55, d));
   }
+
+  // Temperature values for the temperature layer (hundredths of °C per
+  // cell), set from outside; mode "temp" or "diff".
+  const temp = { values: null, mode: "temp", title: "" };
 
   const LAYERS = {
     terrain: {
@@ -76,6 +88,19 @@ const WorldMap = (() => {
       },
       legend: () => rampLegend("Ice thickness (m)", ICE_STOPS, ["0", "1,000", "2,500", "4,000"]),
     },
+    temperature: {
+      name: "Temperature",
+      color(c, i) {
+        const v = temp.values ? temp.values[i] : NO_VALUE;
+        if (v === NO_VALUE) return c.kind[i] === 0 ? [30, 40, 52] : [70, 68, 62];
+        const col = ramp(temp.mode === "diff" ? DIFF_STOPS : TEMP_STOPS, v / 100);
+        return c.kind[i] === 0 ? col.map((x) => x * 0.82) : col.map((x) => x * (0.75 + 0.25 * shade(c.se[i], c.sn[i])));
+      },
+      legend: () => temp.mode === "diff"
+        ? rampLegend(temp.title || "Model minus observed (°C)", DIFF_STOPS, ["−10", "−5", "0", "+5", "+10"]) +
+          swatch([70, 68, 62], "No observation")
+        : rampLegend(temp.title || "Temperature (°C)", TEMP_STOPS, ["−40", "−20", "0", "20", "40"]),
+    },
   };
 
   function css(c) { return `rgb(${c.map(Math.round).join(",")})`; }
@@ -83,8 +108,8 @@ const WorldMap = (() => {
     return `<div class="row"><span class="swatch" style="background:${css(c)}"></span>${label}</div>`;
   }
   function rampLegend(title, stops, ticks) {
-    const max = stops[stops.length - 1][0];
-    const grad = stops.map(([v, c]) => `${css(c)} ${(v / max) * 100}%`).join(",");
+    const min = stops[0][0], max = stops[stops.length - 1][0];
+    const grad = stops.map(([v, c]) => `${css(c)} ${((v - min) / (max - min)) * 100}%`).join(",");
     return `<div>${title}</div><div class="ramp" style="background:linear-gradient(to right,${grad})"></div>` +
       `<div class="ticks">${ticks.map((t) => `<span>${t}</span>`).join("")}</div>`;
   }
@@ -119,7 +144,7 @@ const WorldMap = (() => {
     return s;
   }
 
-  async function create(canvas, onHover) {
+  async function create(canvas, onHover, onClick) {
     const gl = canvas.getContext("webgl2", { antialias: false });
     if (!gl) throw new Error("This browser does not support WebGL2.");
 
@@ -225,9 +250,22 @@ const WorldMap = (() => {
       return raster[y * rw + x];
     }
 
-    let drag = null;
-    canvas.addEventListener("mousedown", (e) => { drag = [e.clientX, e.clientY]; canvas.classList.add("dragging"); });
-    window.addEventListener("mouseup", () => { drag = null; canvas.classList.remove("dragging"); });
+    let drag = null, downAt = null;
+    canvas.addEventListener("mousedown", (e) => {
+      drag = [e.clientX, e.clientY];
+      downAt = [e.clientX, e.clientY];
+      canvas.classList.add("dragging");
+    });
+    window.addEventListener("mouseup", (e) => {
+      if (downAt && e.target === canvas && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) < 4 && onClick) {
+        const [lon, lat] = lonLatAt(e.clientX, e.clientY);
+        const i = cellAt(lon, lat);
+        if (i >= 0) onClick(describe(i, lon, lat));
+      }
+      drag = null;
+      downAt = null;
+      canvas.classList.remove("dragging");
+    });
     window.addEventListener("mousemove", (e) => {
       if (drag) {
         const dpr = canvas.width / canvas.getBoundingClientRect().width;
@@ -262,6 +300,8 @@ const WorldMap = (() => {
       return {
         lat, lon, cell: i, kind: c.kind[i], elev: c.elev[i], elevMin: c.elevMin[i], elevMax: c.elevMax[i],
         landShare: c.land[i] / 255, ice: c.ice[i], epochLabel: c.label,
+        temp: state.layer === "temperature" && temp.values && temp.values[i] !== NO_VALUE ? temp.values[i] / 100 : null,
+        tempMode: temp.mode, tempTitle: temp.title,
       };
     }
 
@@ -283,8 +323,15 @@ const WorldMap = (() => {
     return {
       epochs: info.epochs,
       layers: Object.entries(LAYERS).map(([id, l]) => ({ id, name: l.name })),
-      setEpoch(i) { state.epoch = i; recolor(); },
+      setEpoch(i) { if (state.epoch !== i) { state.epoch = i; recolor(); } },
+      epoch() { return state.epoch; },
       setLayer(id) { state.layer = id; recolor(); },
+      layer() { return state.layer; },
+      /// values: Int16Array of hundredths of °C per cell; mode "temp" or "diff".
+      setTemperature(values, mode, title) {
+        temp.values = values; temp.mode = mode; temp.title = title;
+        if (state.layer === "temperature") recolor();
+      },
       legendHtml() { return LAYERS[state.layer].legend(); },
     };
   }

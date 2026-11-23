@@ -7,4 +7,9 @@ license.workspace = true
 
 [dependencies]
 history = { path = "../history" }
+world = { path = "../world" }
+climate = { path = "../climate" }
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

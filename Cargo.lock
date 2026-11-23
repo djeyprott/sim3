@@ -67,6 +67,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
+name = "climate"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "world",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -111,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "history"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]
@@ -352,9 +360,10 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "axum",
+ "climate",
  "history",
  "serde",
  "serde_json",
@@ -375,10 +384,13 @@ dependencies = [
 
 [[package]]
 name = "sim"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
+ "climate",
  "history",
  "serde",
+ "serde_json",
+ "world",
 ]
 
 [[package]]
@@ -523,7 +535,7 @@ dependencies = [
 
 [[package]]
 name = "world"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]

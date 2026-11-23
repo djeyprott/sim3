@@ -19,7 +19,14 @@
       <button id="step-month" type="button" title="Advance one month">+1 month</button>
       <button id="step-year" type="button" title="Advance one year">+1 year</button>
       <select id="speed" title="Speed"></select>
+      <span id="rate" class="rate"></span>
     </div>
+    <label class="run">Run
+      <select id="run" title="Kind of run">
+        <option value="holocene">From 10,000 BCE</option>
+        <option value="present_day_check">Present-day check</option>
+      </select>
+    </label>
     <span id="connection" class="status">connecting…</span>
   </header>
 
@@ -31,7 +38,12 @@
       <div class="panel map-options">
         <div class="option-group" id="epochs" role="group" aria-label="Moment shown"></div>
         <div class="option-group" id="layers" role="group" aria-label="Map layer"></div>
+        <div class="option-group" id="temp-options" role="group" aria-label="Temperature shown" hidden></div>
+        <div class="option-group"><button id="world-toggle" type="button" aria-pressed="false">World temperature</button></div>
       </div>
+
+      <div class="panel chart-panel" id="cell-chart" hidden></div>
+      <div class="panel chart-panel world" id="world-chart" hidden></div>
 
       <div class="panel hover" id="hover" hidden></div>
       <div class="panel legend" id="legend"></div>
@@ -39,6 +51,10 @@
     </main>
 
     <aside class="chronicle">
+      <section id="check" class="check" hidden>
+        <h2>Present-day check</h2>
+        <div id="check-body"></div>
+      </section>
       <h2>Chronicle</h2>
       <ol id="events"></ol>
     </aside>

@@ -86,4 +86,7 @@ Every event goes into a structured log with its causes. Browse people, places, o
 4. **Run style.** Live, with pause and inspect, and browsing of everything that has already happened.
 5. **Repo.** github.com/djeyprott/sim3, commits straight to `main` after approval. License GPL-3.0-or-later.
 6. **Platform.** The owner runs Windows; releases ship a ready-made `sim3.exe`.
+8. **Climate cadence.** The climate updates once per simulated month (decided 22 Nov for speed); daily weather is derived from it where needed (Step 5). Climate gets at most ~10% of simulation time.
+9. **Climate history.** Eruptions, solar changes and other shifts are random with realistic statistics; the ice sheets respond to the simulated climate; CO2 follows the ice-core record (Bereiter et al. 2015).
+10. **Present-day check** is a run the owner can start in the viewer (1931-2010, compared with CHELSA 1981-2010).
 7. **Time step.** One tick is one day, labelled with the proleptic Gregorian calendar. Each system runs at the cadence it needs: daily for weather and people's actions, seasonally or yearly for slow processes such as demography, harvests, ice sheets and sea level.
