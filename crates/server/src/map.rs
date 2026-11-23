@@ -8,7 +8,8 @@ use world::grid::{from_lat_lon, Grid};
 use world::terrain::{slopes, Terrain};
 
 /// The world data file, built by .github/workflows/data.yml (see build.rs).
-pub const WORLD_DATA: &[u8] =
+/// A `static` (not `const`) so the program holds exactly one copy.
+pub static WORLD_DATA: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/world.bin"));
 
 /// Size of the lookup image that tells the browser which cell each map pixel

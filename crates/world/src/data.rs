@@ -179,14 +179,16 @@ impl WorldData {
                 b"CO2 " => {
                     let n = s.u32()? as usize;
                     let v = s.f32s(n * 2)?;
-                    out.co2_record = v.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+                    out.co2_record = v.as_chunks::<2>().0.iter().map(|p| (p[0], p[1])).collect();
                 }
                 b"CO2P" => out.co2_1981_2010_ppm = Some(s.f32s(1)?[0]),
                 b"ORBT" => {
                     let n = s.u32()? as usize;
                     let v = s.f32s(n * 4)?;
                     out.orbit = v
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .map(|q| OrbitRow {
                             kyr: q[0],
                             eccentricity: q[1],
