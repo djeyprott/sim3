@@ -10,6 +10,7 @@ pub mod atmosphere;
 pub mod check;
 pub mod koppen;
 pub mod model;
+pub mod ocean;
 pub mod orbit;
 pub mod solver;
 

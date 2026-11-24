@@ -139,6 +139,7 @@ function hoverHtml(h) {
       rain: () => `${Math.round(v).toLocaleString()} mm`,
       ratio: () => { const r = Math.pow(10, v / 100); return r >= 1 ? `×${r.toFixed(1)}` : `÷${(1 / r).toFixed(1)}`; },
       snow: () => `${Math.round(v).toLocaleString()} mm of water`,
+      seaice: () => (v > 0 ? `${(v / 100).toFixed(1)} m thick` : "open sea"),
       zone: () => { const z = ZONE_NAMES[v]; return z ? `${z.code} · ${z.name}` : "—"; },
     }[h.fieldMode] ?? (() => String(v));
     rows.push(`<div>${h.fieldTitle}: ${text()}</div>`);
@@ -286,7 +287,7 @@ function checkHtml(d) {
     row(`Typical land error, summer–winter swing (mark ${pm.seasonal_swing_error_c} °C)`, `${s.seasonal_swing_error_c.toFixed(1)} °C`,
       s.pass_seasonal) +
     row("Land on average too warm (+) or cold (−)", `${s.land_bias_c >= 0 ? "+" : "−"}${Math.abs(s.land_bias_c).toFixed(1)} °C`) +
-    `</table>` + rainCheckHtml(d) +
+    `</table>` + rainCheckHtml(d) + oceanCheckHtml(d) +
     `<p class="note">Compare maps with each layer's "Observed" and "Model − observed" views.</p>`;
 }
 
@@ -313,6 +314,22 @@ function rainCheckHtml(d) {
   return out + `</table>`;
 }
 
+function oceanCheckHtml(d) {
+  const o = d.ocean;
+  if (!o) return "";
+  const row = (label, value, ok) => `<tr><td>${label}</td><td class="num">${value}</td>` +
+    `<td class="num ${ok ? "pass" : "fail"}">${ok ? "pass" : "miss"}</td></tr>`;
+  let out = `<h3>Oceans and sea ice</h3><table>`;
+  for (const i of o.sea_ice) {
+    out += row(`Sea ice, ${i.name} (observed ${i.observed_million_km2} million km², within 25%)`,
+      `${i.model_million_km2.toFixed(1)} million km²`, i.pass);
+  }
+  for (const c of o.contrasts) {
+    out += row(`${c.name} (observed by ${c.observed_c.toFixed(0)} °C)`, `by ${c.model_c.toFixed(1)} °C`, c.pass);
+  }
+  return out + `</table>`;
+}
+
 async function refreshCheck() {
   const box = $("check");
   if (!state || state.scenario !== "present_day_check") { box.hidden = true; return; }
@@ -325,6 +342,7 @@ const FIELDS = {
   temperature: { views: ["current", "normal", "observed", "difference"] },
   rain: { views: ["current", "normal", "observed", "difference"] },
   snow: { views: ["current", "normal"] },
+  seaice: { views: ["current"] },
   zone: { views: ["normal", "observed"] },
 };
 const VIEW_LABELS = { current: "This month", normal: "Recent average", observed: "Observed", difference: "Model − observed" };
@@ -381,6 +399,9 @@ async function refreshTemperature(map, force) {
       observed: `Observed rain and snow, ${when}, 1981–2010 (mm)`,
       difference: `Model rain as a multiple of observed, ${when}`,
     }[temp.view];
+  } else if (layer === "seaice") {
+    mode = "seaice";
+    title = `Sea ice thickness now, ${state.date_label.replace(/^\d+ /, "")} (cm)`;
   } else if (layer === "snow") {
     mode = "snow";
     title = temp.view === "current" ? `Lying snow now (mm of water)`
@@ -394,13 +415,19 @@ async function refreshTemperature(map, force) {
   $("legend").innerHTML = map.legendHtml();
 }
 
-const winds = { on: false, tick: -1 };
+// Arrows over the map: this month's winds or this year's ocean currents.
+const winds = { on: null, tick: -1 };
 async function refreshWinds(map, force) {
   if (!winds.on) { map.setArrows(null); return; }
   if (!state || (!force && state.tick === winds.tick)) return;
   winds.tick = state.tick;
-  const d = await api("/api/climate/winds");
-  if (winds.on) map.setArrows(d.winds);
+  if (winds.on === "winds") {
+    const d = await api("/api/climate/winds");
+    if (winds.on === "winds") map.setArrows(d.winds, 2.2, "rgba(20, 18, 14, 0.85)");
+  } else {
+    const d = await api("/api/climate/currents");
+    if (winds.on === "currents") map.setArrows(d.currents, 100, "rgba(10, 30, 70, 0.9)", true);
+  }
 }
 
 WorldMap.create($("map"), (h) => {
@@ -410,11 +437,14 @@ WorldMap.create($("map"), (h) => {
 }, (h) => showCellChart(h).catch(() => {})).then((map) => {
   $("map-loading").remove();
   ZONE_NAMES = map.zones;
-  $("winds-toggle").addEventListener("click", (e) => {
-    winds.on = !winds.on;
-    e.target.setAttribute("aria-pressed", String(winds.on));
-    refreshWinds(map, true).catch(() => {});
-  });
+  for (const [id, kind] of [["winds-toggle", "winds"], ["currents-toggle", "currents"]]) {
+    $(id).addEventListener("click", () => {
+      winds.on = winds.on === kind ? null : kind;
+      $("winds-toggle").setAttribute("aria-pressed", String(winds.on === "winds"));
+      $("currents-toggle").setAttribute("aria-pressed", String(winds.on === "currents"));
+      refreshWinds(map, true).catch(() => {});
+    });
+  }
   const showLegend = () => { $("legend").innerHTML = map.legendHtml(); };
   const epochButtons = () => optionButtons($("epochs"), map.epochs.map((e) => ({ id: e.index, label: e.label })), map.epoch(),
     (i) => map.setEpoch(i));

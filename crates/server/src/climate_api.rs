@@ -151,6 +151,9 @@ pub async fn get_map(
                 )
             }
             ("rain", _) => encode_scaled(c.map_precip(month).into_iter().map(Some), 1.0),
+            ("seaice", _) => {
+                encode_scaled(c.map_sea_ice().into_iter().map(|v| Some(v * 100.0)), 1.0)
+            }
             ("snow", "current") => encode_scaled(c.map_snow_current().into_iter().map(Some), 1.0),
             ("snow", _) => encode_scaled(c.map_snow(month).into_iter().map(Some), 1.0),
             ("zone", "observed") => {
@@ -182,6 +185,28 @@ pub async fn get_map(
 /// Like `encode` but values are multiplied by `scale` (not 100).
 fn encode_scaled(values: impl Iterator<Item = Option<f32>>, scale: f32) -> Bytes {
     encode(values.map(|v| v.map(|x| x * scale / 100.0)))
+}
+
+/// This year's ocean currents: per coarse cell [lat, lon, east m/s, north
+/// m/s] (cm/s precision); cells without a current are left out.
+pub async fn get_currents(State(shared): State<AppState>) -> Json<serde_json::Value> {
+    let sim = shared.sim.lock().unwrap();
+    let w: Vec<[f32; 4]> = sim
+        .climate
+        .ocean
+        .currents()
+        .into_iter()
+        .filter(|c| c.2.is_finite() && c.3.is_finite() && (c.2 != 0.0 || c.3 != 0.0))
+        .map(|(a, b, u, v)| {
+            [
+                a as f32,
+                b as f32,
+                (u * 1000.0).round() as f32 / 1000.0,
+                (v * 1000.0).round() as f32 / 1000.0,
+            ]
+        })
+        .collect();
+    Json(serde_json::json!({ "currents": w }))
 }
 
 /// This month's winds: per coarse cell [lat, lon, east m/s, north m/s].
@@ -298,10 +323,19 @@ pub async fn get_check(State(shared): State<AppState>) -> Json<serde_json::Value
             &shared.world.data.epochs[sim.epoch].land_share,
         )
     })();
+    let ocean = (|| {
+        sim.scenario.comparison_window()?;
+        climate::check::ocean_scores(
+            &sim.climate,
+            shared.world.data.observed_temperature.as_ref()?,
+            &shared.world.map_grid,
+        )
+    })();
     Json(serde_json::json!({
         "window": sim.scenario.comparison_window(),
         "scores": scores,
         "rain": rain,
+        "ocean": ocean,
         "zones": climate::koppen::Zone::ALL.iter().map(|z| z.code()).collect::<Vec<_>>(),
         "pass_marks": {
             "global_mean_c": climate::check::PASS_GLOBAL_MEAN_C,

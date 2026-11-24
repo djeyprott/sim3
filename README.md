@@ -2,7 +2,7 @@
 
 A human history simulator. It starts around 10,000 BCE on Earth's real terrain and simulates climate, populations, cultures, languages, religions, technology, organizations and the people who lead them, with a browser viewer for watching history unfold and reviewing what happened.
 
-Status: **Phase 1, step 3**: Earth's terrain, sea and ice from 1 January 10,000 BCE, with a monthly climate driven by sunlight and the Earth's orbit: temperature, winds, rain, snow and Köppen climate zones. A present-day check run compares the model with observed temperatures, rainfall and climate zones. Ocean currents, sea ice and the monsoons come next. See [docs/design.md](docs/design.md) for the plan.
+Status: **Phase 1, step 4**: Earth's terrain, sea and ice from 1 January 10,000 BCE, with a monthly climate driven by sunlight and the Earth's orbit: air and sea temperatures, winds, wind-driven ocean currents, the Atlantic-style overturning circulation, sea ice, rain, snow and Köppen climate zones. A present-day check run compares the model with observed temperatures, rainfall, climate zones and sea ice. Known misses (the North Atlantic's warmth at Bergen, the monsoon, sea ice amounts) are left for a later climate polish step. See [docs/design.md](docs/design.md) for the plan.
 
 ## Running it on Windows
 

@@ -415,6 +415,7 @@ async fn main() {
         .route("/api/climate/cell", get(climate_api::get_cell))
         .route("/api/climate/global", get(climate_api::get_global))
         .route("/api/climate/winds", get(climate_api::get_winds))
+        .route("/api/climate/currents", get(climate_api::get_currents))
         .route("/api/climate/check", get(climate_api::get_check))
         .with_state(shared);
 

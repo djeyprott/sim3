@@ -47,6 +47,9 @@ const WorldMap = (() => {
     { code: "D", name: "Continental (cold winters)", color: [150, 95, 185] },
     { code: "E", name: "Polar and alpine", color: [165, 215, 235] },
   ];
+  const SEAICE_STOPS = [ // sea ice thickness (cm)
+    [0, [170, 200, 225]], [50, [205, 225, 240]], [150, [232, 240, 248]], [400, [255, 255, 255]],
+  ];
   const NO_VALUE = -32768;
   const BASIN = [104, 134, 128];
   const FLAT = { ocean: [43, 74, 107], land: [139, 139, 90], ice: [232, 238, 243], basin: BASIN };
@@ -88,6 +91,9 @@ const WorldMap = (() => {
       case "rain": col = ramp(RAIN_STOPS, temp.monthly ? v * 12 : v); break;
       case "ratio": col = ramp(RATIO_STOPS, v); break;
       case "snow": col = ramp(SNOW_STOPS, v); break;
+      case "seaice":
+        if (c.kind[i] !== 0) return LAYERS.terrain.color(c, i).map((x) => x * 0.6);
+        return v > 0 ? ramp(SEAICE_STOPS, v) : [30, 60, 95];
       case "zone": col = (ZONES[v] ?? { color: NO_DATA }).color; break;
       default: col = ramp(TEMP_STOPS, v / 100);
     }
@@ -147,6 +153,12 @@ const WorldMap = (() => {
       name: "Snow",
       color: (c, i) => fieldColor(c, i, "snow"),
       legend: () => rampLegend(temp.title || "Lying snow (mm of water)", SNOW_STOPS, ["0", "50", "200", "1,000"]),
+    },
+    seaice: {
+      name: "Sea ice",
+      color: (c, i) => fieldColor(c, i, "seaice"),
+      legend: () => rampLegend(temp.title || "Sea ice thickness (cm)", SEAICE_STOPS, ["0", "150", "400"]) +
+        swatch([30, 60, 95], "Open sea"),
     },
     zone: {
       name: "Climate zones",
@@ -262,6 +274,7 @@ const WorldMap = (() => {
     canvas.after(overlay);
     const ctx2d = overlay.getContext("2d");
     let arrows = null;
+    let arrowStyle = { perUnit: 2.2, color: "rgba(20, 18, 14, 0.85)", sqrt: false };
     function drawArrows() {
       overlay.width = canvas.width; overlay.height = canvas.height;
       ctx2d.clearRect(0, 0, overlay.width, overlay.height);
@@ -271,9 +284,9 @@ const WorldMap = (() => {
       const cellDeg = 4; // the wind grid is ~4° apart
       const every = Math.max(1, Math.round(28 * dpr / (state.scale * cellDeg)));
       ctx2d.lineWidth = 1.3 * dpr;
-      ctx2d.strokeStyle = "rgba(20, 18, 14, 0.85)";
-      ctx2d.fillStyle = "rgba(20, 18, 14, 0.85)";
-      const len = 2.2 * dpr; // pixels per m/s
+      ctx2d.strokeStyle = arrowStyle.color;
+      ctx2d.fillStyle = arrowStyle.color;
+      const len = arrowStyle.perUnit * dpr; // pixels per m/s
       arrows.forEach(([lat, lon, ue, vn], k) => {
         if (k % (every * every) !== 0) return;
         let dlon = lon - state.center[0];
@@ -281,7 +294,10 @@ const WorldMap = (() => {
         const x = overlay.width / 2 + dlon * state.scale;
         const y = overlay.height / 2 - (lat - state.center[1]) * state.scale;
         if (x < -20 || y < -20 || x > overlay.width + 20 || y > overlay.height + 20) return;
-        const dx = ue * len, dy = -vn * len, L = Math.hypot(dx, dy);
+        // With sqrt, length grows with the square root of speed, so slow
+        // flows still show their direction and fast ones stay readable.
+        const per = arrowStyle.sqrt ? len / Math.sqrt(Math.hypot(ue, vn) || 1) : len;
+        const dx = ue * per, dy = -vn * per, L = Math.hypot(dx, dy);
         if (L < 1) return;
         ctx2d.beginPath();
         ctx2d.moveTo(x - dx / 2, y - dy / 2);
@@ -428,7 +444,12 @@ const WorldMap = (() => {
         if (state.layer === layer) recolor();
       },
       /// Wind arrows: [[lat, lon, east m/s, north m/s], ...] or null.
-      setArrows(list) { arrows = list; drawArrows(); },
+      /// perUnit: pixels per m/s (per √(m/s) with sqrt); color: CSS colour.
+      setArrows(list, perUnit, color, sqrt) {
+        arrows = list;
+        if (perUnit) arrowStyle = { perUnit, color, sqrt: !!sqrt };
+        drawArrows();
+      },
       zones: ZONES,
       legendHtml() { return LAYERS[state.layer].legend(); },
     };

@@ -53,6 +53,9 @@ pub const MIXED_LAYER_DEPTH_M: f64 = 500.0;
 /// reach about 700 hPa, roughly 3 km; 2.5 km is used (an Asian summer
 /// anomaly of +10 K then gives about -10 hPa, as observed).
 pub const THERMAL_LOW_DEPTH_M: f64 = 2_500.0;
+/// Temperature range over which latitudes count toward the thermal
+/// equator, K (see `update_winds`).
+pub const THERMAL_EQUATOR_WIDTH_K: f64 = 1.0;
 /// Buoyancy frequency × depth of the heated layer, m/s: the speed of the
 /// gravity waves that spread pressure changes (N ≈ 0.01 /s in the
 /// troposphere; Gill 1982, Atmosphere-Ocean Dynamics). Pressure differences
@@ -63,6 +66,8 @@ pub const GRAVITY_WAVE_SPEED: f64 = 0.01 * THERMAL_LOW_DEPTH_M;
 /// Scale height of water vapour, m: column vapour ≈ surface saturation
 /// vapour density × 2 km (Hartmann, Global Physical Climatology, 2016).
 pub const VAPOUR_SCALE_HEIGHT_M: f64 = 2_000.0;
+/// Heat capacity of the air column, cp·ps/g, J/m²/K.
+pub const COLUMN_HEAT_CAPACITY: f64 = 1004.0 * 101_325.0 / 9.81;
 /// Bulk transfer coefficient for evaporation over the sea (Large & Pond
 /// 1982, J. Phys. Oceanogr. 12, 464-482): 1.2e-3.
 pub const EVAPORATION_COEF: f64 = 1.2e-3;
@@ -174,10 +179,15 @@ pub struct Atmosphere {
     // State and outputs per coarse cell.
     /// Pressure anomaly, Pa.
     pub pressure: Vec<f64>,
+    /// Heat carried by the air from upwind neighbours, W/m²/K per
+    /// neighbour entry: C_air × inflow speed × edge / area.
+    pub heat_adv: Vec<f64>,
     /// Near-surface wind (east, north), m/s.
     pub wind: Vec<(f64, f64)>,
     /// Vapour-weighted wind of the whole column (east, north), m/s.
     pub carry_wind: Vec<(f64, f64)>,
+    /// Wind above the surface layer (geostrophic + thermal), m/s.
+    pub free_wind: Vec<(f64, f64)>,
     /// Column water vapour, kg/m².
     pub vapour: Vec<f64>,
     /// Rain rate (kg/m²/s) per climate cell, from the last solve.
@@ -186,6 +196,10 @@ pub struct Atmosphere {
     pub evaporation: Vec<f64>,
     /// Evaporation from wet ground or open water (kg/m²/s) per coarse cell.
     pub potential_evaporation: Vec<f64>,
+    sea_evaporation: Vec<f64>,
+    /// Largest evaporation wet ground can sustain from its energy supply
+    /// per coarse cell, kg/m²/s (Priestley-Taylor; set each month).
+    pub land_energy_limit: Vec<f64>,
     sat_density: Table,
     // Work arrays.
     flow: Vec<f64>,
@@ -198,6 +212,7 @@ pub struct Atmosphere {
     lon_deg: Vec<f64>,
     pub moisture_sweeps: usize,
     vapour_by_month: Vec<Vec<f64>>,
+    prev_vapour: Vec<f64>,
     pressure_by_month: Vec<Vec<f64>>,
     coef: Vec<f64>,
     lcl: Vec<f64>,
@@ -368,11 +383,15 @@ impl Atmosphere {
             pressure: vec![0.0; n],
             wind: vec![(0.0, 0.0); n],
             carry_wind: vec![(0.0, 0.0); n],
+            free_wind: vec![(0.0, 0.0); n],
+            heat_adv: vec![0.0; m],
             surface_flow: vec![0.0; m],
             vapour: vec![10.0; n],
             precip: vec![0.0; fine.len()],
             evaporation: vec![0.0; n],
             potential_evaporation: vec![0.0; n],
+            sea_evaporation: vec![0.0; n],
+            land_energy_limit: vec![f64::MAX; n],
             sat_density: Table::new(saturation_vapour_density),
             flow: vec![0.0; m],
             wsat: vec![0.0; n],
@@ -382,6 +401,7 @@ impl Atmosphere {
             lon_deg: coarse.centers.iter().map(|&c| to_lat_lon(c).1).collect(),
             moisture_sweeps: 0,
             vapour_by_month: vec![Vec::new(); 12],
+            prev_vapour: Vec::new(),
             pressure_by_month: vec![Vec::new(); 12],
             coef: vec![0.0; m],
             lcl: vec![0.0; n],
@@ -392,6 +412,10 @@ impl Atmosphere {
             radius2,
             raw_pressure: vec![0.0; n],
         }
+    }
+
+    pub fn lat(&self, p: usize) -> f64 {
+        self.lat_deg[p]
     }
 
     pub fn len(&self) -> usize {
@@ -453,15 +477,28 @@ impl Atmosphere {
                 sw[k][b] += self.area[p];
             }
         }
+        // Not just the single warmest band, which would make the belt jump
+        // between hemispheres: the average latitude of the bands, each
+        // weighted by exp(-(T_max - T) / W) with W = THERMAL_EQUATOR_WIDTH_K,
+        // so it glides as the seasons change.
+        let scale = THERMAL_EQUATOR_WIDTH_K;
         let mut eqs = [0.0f64; SECTORS];
         for k in 0..SECTORS {
-            let mut best = (f64::MIN, 0.0);
+            let mut tmax = f64::MIN;
             for b in 0..tropic_bands {
-                if sw[k][b] > 0.0 && st[k][b] / sw[k][b] > best.0 {
-                    best = (st[k][b] / sw[k][b], -25.0 + 2.0 * b as f64 + 1.0);
+                if sw[k][b] > 0.0 {
+                    tmax = tmax.max(st[k][b] / sw[k][b]);
                 }
             }
-            eqs[k] = best.1;
+            let (mut num, mut den) = (0.0, 0.0);
+            for b in 0..tropic_bands {
+                if sw[k][b] > 0.0 {
+                    let wgt = (-(tmax - st[k][b] / sw[k][b]) / scale).exp();
+                    num += wgt * (-25.0 + 2.0 * b as f64 + 1.0);
+                    den += wgt;
+                }
+            }
+            eqs[k] = if den > 0.0 { num / den } else { 0.0 };
         }
         self.thermal_equator_deg = eqs.iter().sum::<f64>() / SECTORS as f64;
         self.sector_equator = eqs;
@@ -586,6 +623,7 @@ impl Atmosphere {
                 surface_share * self.wind[p].0 + (1.0 - low_share) * free.0,
                 surface_share * self.wind[p].1 + (1.0 - low_share) * free.1,
             );
+            self.free_wind[p] = free;
         }
         // Velocity across each edge (positive outward), for the surface wind
         // (convergence) and the vapour-carrying wind. Each edge's speed is
@@ -610,6 +648,21 @@ impl Atmosphere {
                 };
                 self.surface_flow[j] = across(&self.wind);
                 self.flow[j] = across(&self.carry_wind);
+            }
+        }
+        // The air column's heat moves with the wind above the surface
+        // layer (geostrophic plus thermal wind), the part that circles the
+        // globe. The near-surface inflow to the rain belts goes back out
+        // aloft, carrying little heat on balance; its effect is in the
+        // large-scale mixing.
+        for p in 0..n {
+            let (s, e) = (self.offsets[p] as usize, self.offsets[p + 1] as usize);
+            for j in s..e {
+                let q = self.nbrs[j] as usize;
+                let (dx, dy) = self.dir[j];
+                let w = &self.free_wind;
+                let un = 0.5 * (w[p].0 * dx + w[p].1 * dy + w[q].0 * dx + w[q].1 * dy);
+                self.heat_adv[j] = COLUMN_HEAT_CAPACITY * (-un).max(0.0) * self.l_over_a[j];
             }
         }
     }
@@ -647,8 +700,12 @@ impl Atmosphere {
                 .at(t_surface[p] + LAPSE_RATE * self.coarse_height[p])
                 * VAPOUR_SCALE_HEIGHT_M;
             let column_rh = (self.vapour[p] / self.wsat[p]).clamp(0.0, SURFACE_RELATIVE_HUMIDITY);
-            let land_rate = EVAPORATION_COEF * speed * rho_v * (1.0 - column_rh);
+            // Wet ground can't evaporate faster than its energy supply
+            // allows (`land_energy_limit`, set by the temperature model).
+            let land_rate = (EVAPORATION_COEF * speed * rho_v * (1.0 - column_rh))
+                .min(self.land_energy_limit[p]);
             self.potential_evaporation[p] = land_rate;
+            self.sea_evaporation[p] = sea_rate;
             self.evaporation[p] = sea_rate * sea[p] + land_rate * land[p] * soil_wetness[p];
         }
         // Mean upslope wind of each coarse cell's fine cells (m/s per m of
@@ -716,8 +773,14 @@ impl Atmosphere {
         }
         let rain0 = (-BRETHERTON_A * BRETHERTON_B).exp() * mm_day;
         // Start from the same month last year, the closest guess.
-        if self.vapour_by_month[month].len() == n {
-            self.vapour.copy_from_slice(&self.vapour_by_month[month]);
+        // Starting guess: last month's answer plus last year's change
+        // between the same two months.
+        if self.vapour_by_month[month].len() == n && self.prev_vapour.len() == n {
+            for p in 0..n {
+                self.vapour[p] = (self.vapour[p] + self.vapour_by_month[month][p]
+                    - self.prev_vapour[p])
+                    .max(1e-6);
+            }
         }
         // Passes alternate direction (symmetric Gauss-Seidel), so moisture
         // carried either way along the grid order spreads quickly. Each pass
@@ -753,6 +816,7 @@ impl Atmosphere {
                 break;
             }
         }
+        std::mem::swap(&mut self.prev_vapour, &mut self.vapour_by_month[month]);
         self.vapour_by_month[month].clone_from(&self.vapour);
         // Rain per fine cell: humidity-driven part of its coarse cell plus
         // its own upslope part (which averages to the coarse cell's).
@@ -769,6 +833,11 @@ impl Atmosphere {
         }
     }
 
+    /// Evaporation from open sea in a coarse cell, kg/m²/s (mm/s).
+    pub fn potential_evaporation_sea(&self, p: usize) -> f64 {
+        self.sea_evaporation[p]
+    }
+
     /// Column relative humidity, evaporation (mm/day) and convergence
     /// (1/day) of the coarse cell containing a fine cell.
     pub fn moisture_at_fine(&self, fine_cell: usize) -> (f64, f64, f64) {
@@ -778,6 +847,21 @@ impl Atmosphere {
             self.evaporation[p] * 86_400.0,
             self.convergence[p] * 86_400.0,
         )
+    }
+
+    /// Column relative humidity of a coarse cell (0-1), from the last
+    /// moisture solve.
+    pub fn relative_humidity(&self, p: usize) -> f64 {
+        (self.vapour[p] / self.wsat[p].max(1e-6)).clamp(0.0, 1.0)
+    }
+
+    /// Rain per coarse cell from the last moisture solve, kg/m²/s.
+    pub fn coarse_rain(&self) -> Vec<f64> {
+        let mut out = vec![0.0; self.n];
+        for (i, &p) in self.parent.iter().enumerate() {
+            out[p as usize] += self.precip[i] * self.fine_area[i] / self.area[p as usize];
+        }
+        out
     }
 
     /// Pressure anomaly (Pa) of the coarse cell containing a fine cell.

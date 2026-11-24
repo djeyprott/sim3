@@ -56,6 +56,46 @@ fn present_day_check() {
             b.lat_from, b.lat_to, b.model_c, b.observed_c, b.model_swing_c, b.observed_swing_c
         );
     }
+    println!(
+        "gyres (Sv): north subtropics {:.0}, south subtropics {:.0}, north subpolar {:.0}",
+        sim.climate.ocean.gyre_strength_sv(15.0, 40.0),
+        sim.climate.ocean.gyre_strength_sv(-40.0, -15.0),
+        sim.climate.ocean.gyre_strength_sv(45.0, 65.0)
+    );
+    for b in &sim.climate.ocean.basins {
+        println!(
+            "overturning basin at {:.0},{:.0}: {:.1} Sv, {:.2} PW, salinity diff {:.2}, P-E warm {:.2} cold {:.2} m/yr, T {:.1} / {:.1}",
+            b.name_lat_lon.0,
+            b.name_lat_lon.1,
+            b.flow / 1e6,
+            b.heat_w / 1e15,
+            b.salinity_diff,
+            b.fresh_m_per_year.0,
+            b.fresh_m_per_year.1,
+            b.temperatures.0,
+            b.temperatures.1
+        );
+    }
+    println!("deep water {:.1} °C", sim.climate.ocean.deep_temperature);
+    let o = climate::check::ocean_scores(&sim.climate, obs, &world.map_grid).unwrap();
+    for i in &o.sea_ice {
+        println!(
+            "sea ice {}: {:.1} vs {:.1} million km² {}",
+            i.name,
+            i.model_million_km2,
+            i.observed_million_km2,
+            if i.pass { "pass" } else { "MISS" }
+        );
+    }
+    for c in &o.contrasts {
+        println!(
+            "{}: {:.1} vs {:.1} °C {}",
+            c.name,
+            c.model_c,
+            c.observed_c,
+            if c.pass { "pass" } else { "MISS" }
+        );
+    }
     if let Some(op) = world.data.observed_precipitation.as_ref() {
         let r = climate::check::rain_scores(
             &sim.climate,
@@ -94,8 +134,9 @@ fn present_day_check() {
             );
         }
     }
-    // Step 2 expectations: the world average passes; the agreed land pass
-    // marks are reported but only required from Step 4.
+    // The world average must pass; the agreed land, rain, sea ice and
+    // ocean pass marks are reported and become required in the climate
+    // polish step (see the plan).
     assert!(
         s.pass_global_mean,
         "global mean {:.2} °C",
@@ -185,7 +226,14 @@ fn tune() {
         }
         let profile = (sq / w).sqrt();
         let global = s.global_mean_model_c - s.global_mean_observed_c;
-        (global.abs() + profile, global, profile, s)
+        // Score: the world average plus the two typical land errors the
+        // agreed marks use (yearly average and summer-winter swing).
+        (
+            global.abs() + s.annual_typical_error_c + s.seasonal_swing_error_c,
+            global,
+            profile,
+            s,
+        )
     };
     // Coordinate search from the current values: try each value one step up
     // and down (both at once, on two threads), keep any improvement, and
@@ -263,7 +311,9 @@ fn profile_speed() {
     use std::time::Instant;
     let world = world().unwrap();
     let mut sim = Simulation::new(world.clone(), Scenario::Holocene);
-    for _ in 0..365 * 5 {
+    // Measure after the oceans have settled (about 35 years from the
+    // start): that is the speed of nearly all of a long run.
+    for _ in 0..365 * 40 {
         sim.step();
     }
     let t = Instant::now();
@@ -288,5 +338,9 @@ fn profile_speed() {
     );
     let after = sim.climate.timing;
     let [w, h, m] = [0, 1, 2].map(|k| (after[k] - before[k]) * 1e3 / 240.0);
+    println!(
+        "moisture passes last month {}",
+        sim.climate.atmosphere.moisture_sweeps
+    );
     println!("  of which winds {w:.2} ms, temperature {h:.2} ms, rain and snow {m:.2} ms");
 }

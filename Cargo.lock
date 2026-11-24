@@ -68,7 +68,7 @@ checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
 name = "climate"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "world",
@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "history"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "climate",
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "sim"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "climate",
  "history",
@@ -535,7 +535,7 @@ dependencies = [
 
 [[package]]
 name = "world"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]

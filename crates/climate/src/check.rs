@@ -277,3 +277,115 @@ pub fn rain_scores(
         pass_zones: zone_agreement >= PASS_ZONE_AGREEMENT,
     })
 }
+
+/// Agreed Step 4 marks: sea ice extent within 25% of observed.
+pub const PASS_SEA_ICE_RELATIVE: f64 = 0.25;
+
+/// Observed 1981-2010 mean sea ice extent, million km² (NSIDC Sea Ice
+/// Index v3, monthly climatology): Arctic March and September, Antarctic
+/// September and February.
+pub const OBSERVED_SEA_ICE: [(&str, usize, bool, f64); 4] = [
+    ("Arctic, March", 2, true, 15.5),
+    ("Arctic, September", 8, true, 6.5),
+    ("Antarctic, September", 8, false, 18.5),
+    ("Antarctic, February", 1, false, 3.0),
+];
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SeaIce {
+    pub name: &'static str,
+    pub model_million_km2: f64,
+    pub observed_million_km2: f64,
+    pub pass: bool,
+}
+
+/// A contrast between two places that ocean currents create.
+#[derive(Serialize, Clone, Debug)]
+pub struct Contrast {
+    pub name: &'static str,
+    /// Warmer place minus cooler place, model and observed, °C.
+    pub model_c: f64,
+    pub observed_c: f64,
+    /// Right sign and at least half the observed difference.
+    pub pass: bool,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct OceanScores {
+    pub sea_ice: Vec<SeaIce>,
+    pub contrasts: Vec<Contrast>,
+}
+
+/// Bergen versus the Labrador coast in January (the North Atlantic's warm
+/// water), and Salvador versus Lima over the year (Lima's cold current).
+/// Each: name, warmer place (lat, lon), cooler place, month (None = annual).
+type ContrastSpec = (&'static str, (f64, f64), (f64, f64), Option<usize>);
+
+const CONTRASTS: [ContrastSpec; 2] = [
+    (
+        "Bergen warmer than Labrador in January",
+        (60.4, 5.3),
+        (56.5, -61.7),
+        Some(0),
+    ),
+    (
+        "Salvador warmer than Lima over the year",
+        (-12.97, -38.5),
+        (-12.05, -77.04),
+        None,
+    ),
+];
+
+pub fn ocean_scores(
+    climate: &Climate,
+    obs: &ObservedTemperature,
+    map_grid: &Grid,
+) -> Option<OceanScores> {
+    let mut sea_ice = Vec::new();
+    for (name, month, north, observed) in OBSERVED_SEA_ICE {
+        let (n, s) = climate.window_sea_ice_extent_km2(month)?;
+        let model = if north { n } else { s } / 1e6;
+        sea_ice.push(SeaIce {
+            name,
+            model_million_km2: model,
+            observed_million_km2: observed,
+            pass: (model - observed).abs() <= PASS_SEA_ICE_RELATIVE * observed,
+        });
+    }
+    let value = |row: &[f32], month: Option<usize>| match month {
+        Some(m) => row[m] as f64,
+        None => row.iter().map(|&v| v as f64).sum::<f64>() / 12.0,
+    };
+    let mut contrasts = Vec::new();
+    for (name, warm, cool, month) in CONTRASTS {
+        // The observed land cell nearest each place (coastal towns can
+        // fall in a mostly-sea cell).
+        let nearest = |(lat, lon): (f64, f64)| {
+            let p = world::grid::from_lat_lon(lat, lon);
+            let k = (0..obs.cells.len())
+                .max_by(|&a, &b| {
+                    let d = |i: usize| {
+                        let c = map_grid.centers[obs.cells[i] as usize];
+                        c[0] * p[0] + c[1] * p[1] + c[2] * p[2]
+                    };
+                    d(a).total_cmp(&d(b))
+                })
+                .unwrap();
+            (
+                obs.cells[k] as usize,
+                value(&obs.monthly_c[k * 12..k * 12 + 12], month),
+            )
+        };
+        let ((w, ow), (c, oc)) = (nearest(warm), nearest(cool));
+        let model_c =
+            value(&climate.cell_window(w)?, month) - value(&climate.cell_window(c)?, month);
+        let observed_c = ow - oc;
+        contrasts.push(Contrast {
+            name,
+            model_c,
+            observed_c,
+            pass: model_c >= 0.5 * observed_c,
+        });
+    }
+    Some(OceanScores { sea_ice, contrasts })
+}
