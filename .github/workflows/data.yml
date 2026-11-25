@@ -74,6 +74,8 @@ jobs:
           curl -fsSL --retry 3 -o work/orbit91 https://www.ncei.noaa.gov/pub/data/paleo/climate_forcing/orbital_variations/insolation/orbit91
           curl -fsSL --retry 3 -o work/co2_composite.txt https://www.ncei.noaa.gov/pub/data/paleo/icecore/antarctica/antarctica2015co2composite.txt
           curl -fsSL --retry 3 -o work/co2_mlo.txt https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.txt
+          curl -fsSL --retry 3 -o work/holvol.tab "https://doi.pangaea.de/10.1594/PANGAEA.971971?format=textfile"
+          head -c 3000 work/holvol.tab
           ls -la work
       - if: steps.version.outputs.exists == 'false'
         name: Build the world data file
@@ -81,7 +83,7 @@ jobs:
           pip install --quiet numpy scipy rasterio netCDF4
           cd work
           python ../tools/data/build_world.py grid.bin surface.tif bed.tif ice_0.nc ice_11.5.nc ice_12.nc \
-            chelsa_tas_MM.tif chelsa_pr_MM.tif orbit91 co2_composite.txt co2_mlo.txt world.bin report.json
+            chelsa_tas_MM.tif chelsa_pr_MM.tif orbit91 co2_composite.txt co2_mlo.txt holvol.tab world.bin report.json
           cp ../tools/data/CREDITS.txt .
           ls -la world.bin
       - if: steps.version.outputs.exists == 'false'

@@ -32,6 +32,13 @@ CO2
   (Antarctic composite). NOAA NCEI Paleoclimatology.
   Mauna Loa annual mean CO2: NOAA Global Monitoring Laboratory.
 
+Volcanic eruptions
+  HolVol v1.1: Sigl, M. & Toohey, M. (2024), PANGAEA,
+  https://doi.org/10.1594/PANGAEA.971971 (CC BY 4.0); method in Sigl et al.
+  (2022), Earth Syst. Sci. Data 14, 3167-3196. Only the sizes of eruptions
+  between 9500 and 500 BCE are used, to set how often and how big sim3's own
+  random eruptions are.
+
 Processing
   Aggregated onto sim3's geodesic grid by tools/data/build_world.py in
   https://github.com/djeyprott/sim3 (GPL-3.0-or-later). Ice thickness in

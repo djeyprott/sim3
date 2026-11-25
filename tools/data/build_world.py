@@ -116,7 +116,7 @@ def sample(interp, lat, lon):
 
 
 def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, chelsa_pattern, chelsa_pr_pattern, orbit_path,
-         co2_path, mlo_path, out_path, report_path):
+         co2_path, mlo_path, volc_path, out_path, report_path):
     lat_c, lon_c, area = load_grid(grid_path)
     n = lat_c.size
     print(f"{n} cells", flush=True)
@@ -255,6 +255,10 @@ def main(grid_path, surface_path, bed_path, ice0, ice115, ice12, chelsa_pattern,
         section(f, b"CO2P", [np.array([co2_now], "<f4")])
         orbit = read_orbit(orbit_path)
         section(f, b"ORBT", [np.array([len(orbit)], "<u4"), np.array(orbit, "<f4")])
+        sizes, span = read_volcanoes(volc_path)
+        report["eruptions"] = {"count": len(sizes), "span_years": span, "total_tgs": float(sum(sizes)),
+                               "largest_tgs": float(max(sizes))}
+        section(f, b"VOLC", [np.array([len(sizes)], "<u4"), np.array([span], "<f4"), np.array(sizes, "<f4")])
     print(json.dumps(report, indent=2), flush=True)
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
@@ -373,6 +377,53 @@ def read_orbit(path):
     rows.sort()
     assert len(rows) == 16, f"orbit table parse failed: {rows}"
     return rows
+
+
+# HolVol covers 9500 BCE onwards; v1.1 replaces the part after 500 BCE with
+# eVolv2k, built from a denser set of ice cores that also catches smaller
+# eruptions. Keeping only the part before 500 BCE keeps one counting method
+# (Sigl et al. 2022 recommend HolVol's own cores for long-term frequencies).
+VOLC_FROM_YEAR = -9500
+VOLC_TO_YEAR = -500
+# HolVol's detection threshold (Sigl et al. 2022).
+VOLC_MIN_TGS = 1.0
+
+
+def read_volcanoes(path):
+    """Sulfur injected (Tg S) by each eruption in HolVol v1.1 between 9500
+    and 500 BCE, and the length of that span in years. PANGAEA text format:
+    a /* ... */ header block, then a tab-separated table with a header row.
+    """
+    lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    if lines and lines[0].startswith("/*"):
+        end = next(i for i, l in enumerate(lines) if l.startswith("*/"))
+        lines = lines[end + 1:]
+    header = lines[0].split("\t")
+    low = [h.lower() for h in header]
+
+    def col(pred, what):
+        for i, h in enumerate(low):
+            if pred(h):
+                return i
+        raise AssertionError(f"no {what} column in HolVol header {header}")
+
+    c_s = col(lambda h: "vssi" in h or (("sulfur" in h or "sulphur" in h or h.startswith("s ")) and "tg" in h),
+              "sulfur")
+    c_t = col(lambda h: "year" in h or h.startswith("age") or "date" in h, "date")
+    ka_bp = "ka" in low[c_t] and "bp" in low[c_t]
+    years_bp = "bp" in low[c_t] and not ka_bp
+    sizes = []
+    for line in lines[1:]:
+        p = line.split("\t")
+        try:
+            t, s = float(p[c_t]), float(p[c_s])
+        except (ValueError, IndexError):
+            continue
+        year = 1950 - 1000 * t if ka_bp else (1950 - t if years_bp else t)
+        if VOLC_FROM_YEAR <= year < VOLC_TO_YEAR and s >= VOLC_MIN_TGS:
+            sizes.append(s)
+    assert 400 < len(sizes) < 1000, f"HolVol parse gave {len(sizes)} eruptions; header {header}"
+    return sorted(sizes), float(VOLC_TO_YEAR - VOLC_FROM_YEAR)
 
 
 if __name__ == "__main__":
