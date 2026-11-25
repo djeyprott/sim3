@@ -127,6 +127,7 @@ pub fn saturation_vapour_density(t_c: f64) -> f64 {
 }
 
 /// A function tabulated in 0.05 °C steps over -90..+60 °C.
+#[derive(Clone)]
 pub struct Table {
     v: Vec<f64>,
 }
@@ -151,6 +152,7 @@ impl Table {
     }
 }
 
+#[derive(Clone)]
 pub struct Atmosphere {
     pub tuning: AtmosphereTuning,
     n: usize,
@@ -416,6 +418,10 @@ impl Atmosphere {
 
     pub fn lat(&self, p: usize) -> f64 {
         self.lat_deg[p]
+    }
+
+    pub fn lat_lon(&self, p: usize) -> (f64, f64) {
+        (self.lat_deg[p], self.lon_deg[p])
     }
 
     pub fn len(&self) -> usize {

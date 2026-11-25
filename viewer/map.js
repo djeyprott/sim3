@@ -23,6 +23,9 @@ const WorldMap = (() => {
     [-40, [70, 40, 110]], [-25, [60, 80, 170]], [-10, [100, 150, 210]], [0, [205, 228, 236]],
     [10, [150, 200, 120]], [20, [240, 205, 90]], [30, [220, 100, 50]], [40, [130, 20, 30]],
   ];
+  const ANOM_STOPS = [ // this month minus normal, °C
+    [-4, [40, 80, 170]], [-2, [120, 160, 220]], [0, [235, 235, 230]], [2, [235, 150, 110]], [4, [170, 40, 40]],
+  ];
   const DIFF_STOPS = [ // model minus observed, °C
     [-10, [40, 80, 170]], [-5, [120, 160, 220]], [0, [235, 235, 230]], [5, [235, 150, 110]], [10, [170, 40, 40]],
   ];
@@ -88,6 +91,7 @@ const WorldMap = (() => {
     let col;
     switch (temp.mode) {
       case "diff": col = ramp(DIFF_STOPS, v / 100); break;
+      case "anom": col = ramp(ANOM_STOPS, v / 100); break;
       case "rain": col = ramp(RAIN_STOPS, temp.monthly ? v * 12 : v); break;
       case "ratio": col = ramp(RATIO_STOPS, v); break;
       case "snow": col = ramp(SNOW_STOPS, v); break;
@@ -134,9 +138,11 @@ const WorldMap = (() => {
     temperature: {
       name: "Temperature",
       color: (c, i) => fieldColor(c, i, "temperature"),
-      legend: () => temp.mode === "diff"
+      legend: () => temp.mode === "anom"
+        ? rampLegend(temp.title, ANOM_STOPS, ["−4", "−2", "0", "+2", "+4"])
+        : temp.mode === "diff"
         ? rampLegend(temp.title || "Model minus observed (°C)", DIFF_STOPS, ["−10", "−5", "0", "+5", "+10"]) +
-          swatch(NO_DATA, "No observation")
+          (/observed/i.test(temp.title) ? swatch(NO_DATA, "No observation") : "")
         : rampLegend(temp.title || "Temperature (°C)", TEMP_STOPS, ["−40", "−20", "0", "20", "40"]),
     },
     rain: {
@@ -144,7 +150,7 @@ const WorldMap = (() => {
       color: (c, i) => fieldColor(c, i, "rain"),
       legend: () => temp.mode === "ratio"
         ? rampLegend(temp.title || "Model rain as a multiple of observed", RATIO_STOPS, ["÷10", "÷2", "same", "×2", "×10"]) +
-          swatch(NO_DATA, "No observation")
+          (/observed/i.test(temp.title) ? swatch(NO_DATA, "No observation") : "")
         : rampLegend(temp.title || "Rain and snow (mm)", RAIN_STOPS,
           temp.monthly ? ["0", "40", "170", "330"] : ["0", "500", "2,000", "4,000"]) +
           (temp.mode === "rain" && temp.title.startsWith("Observed") ? swatch(NO_DATA, "No observation") : ""),

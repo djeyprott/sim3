@@ -6,7 +6,7 @@
 
 use serde::Serialize;
 
-/// Months elapsed since the simulation started. This is the canonical time
+/// Days elapsed since the simulation started. This is the canonical time
 /// stamp; calendar dates are derived from it.
 pub type Tick = u64;
 
@@ -17,6 +17,34 @@ pub type EventId = u64;
 pub enum EventKind {
     /// The simulation began at this tick.
     SimulationStarted,
+    /// A volcano put this much sulfur into the stratosphere (Tg S).
+    VolcanicEruption {
+        lat: f32,
+        lon: f32,
+        sulfur_tg: f32,
+    },
+    /// The world's yearly average fell this far below the recent average.
+    WorldCooled {
+        cooling_c: f32,
+    },
+    /// A strong El Niño (warm) or La Niña (cold) peaked: the eastern
+    /// equatorial sea anomaly (°C) and the places where the last three
+    /// months' rain fell furthest below and above normal (% of normal).
+    ElNino(EnsoReport),
+    LaNina(EnsoReport),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EnsoReport {
+    /// Longitude of the middle of the ocean basin.
+    pub basin_lon: f32,
+    pub strength_c: f32,
+    pub dry_lat: f32,
+    pub dry_lon: f32,
+    pub dry_percent: f32,
+    pub wet_lat: f32,
+    pub wet_lon: f32,
+    pub wet_percent: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]

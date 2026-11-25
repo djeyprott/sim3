@@ -116,6 +116,7 @@ pub const LAT_ROWS: usize = 360;
 
 /// Mean daily sunshine (W/m²) for each calendar month and each 0.5°
 /// latitude row, for one orbit. Rows run from the south pole northwards.
+#[derive(Clone)]
 pub struct MonthlySunshine {
     pub table: Vec<[f32; 12]>,
 }

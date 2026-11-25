@@ -138,6 +138,14 @@ pub async fn get_map(
         let n = world.map_grid.len();
         match (field, q.view.as_str()) {
             ("rain", "current") => encode_scaled(c.map_precip_current().into_iter().map(Some), 1.0),
+            ("rain", "anomaly") => {
+                let now = c.map_precip_current();
+                let normal = c.map_precip(Some(c.last_month));
+                encode_scaled(
+                    (0..n).map(|i| Some(100.0 * (now[i].max(1.0) / normal[i].max(1.0)).log10())),
+                    1.0,
+                )
+            }
             ("rain", "observed") => encode_scaled(observed_rain(world, month).into_iter(), 1.0),
             ("rain", "difference") => {
                 let obs = observed_rain(world, month);
@@ -166,6 +174,11 @@ pub async fn get_map(
                 1.0,
             ),
             (_, "current") => encode(c.map_current().into_iter().map(Some)),
+            (_, "anomaly") => {
+                let now = c.map_current();
+                let normal = c.map_normal(Some(c.last_month));
+                encode((0..n).map(|i| Some(now[i] - normal[i])))
+            }
             (_, "observed") => encode(observed(world, month).into_iter()),
             (_, "difference") => {
                 let obs = observed(world, month);
@@ -294,7 +307,27 @@ pub async fn get_global(State(shared): State<AppState>) -> Json<serde_json::Valu
             (year, t)
         })
         .collect();
-    Json(serde_json::json!({ "points": points, "start_year": sim.scenario.start_year() }))
+    // The El Niño-like cycle in the widest equatorial basin: the last 50
+    // years, month by month.
+    let e = &sim.climate.enso_history;
+    let start = sim.scenario.start_year() as f64;
+    let from = e.len().saturating_sub(50 * 12);
+    let enso: Vec<(f64, f32)> = (from..e.len())
+        .map(|k| (start + k as f64 / 12.0, e[k]))
+        .collect();
+    let basin = sim
+        .climate
+        .enso
+        .main_basin()
+        .map(|b| &sim.climate.enso.basins[b])
+        .map(|b| (b.west_lon, b.east_lon, b.width_km));
+    Json(serde_json::json!({
+        "points": points,
+        "start_year": sim.scenario.start_year(),
+        "enso": enso,
+        "enso_basin": basin,
+        "enso_strong_c": climate::variability::ENSO_STRONG_C,
+    }))
 }
 
 pub async fn get_check(State(shared): State<AppState>) -> Json<serde_json::Value> {
@@ -331,11 +364,16 @@ pub async fn get_check(State(shared): State<AppState>) -> Json<serde_json::Value
             &shared.world.map_grid,
         )
     })();
+    let variability = sim
+        .scenario
+        .comparison_window()
+        .and_then(|_| climate::check::variability_scores(&sim.climate, sim.pinatubo_check()));
     Json(serde_json::json!({
         "window": sim.scenario.comparison_window(),
         "scores": scores,
         "rain": rain,
         "ocean": ocean,
+        "variability": variability,
         "zones": climate::koppen::Zone::ALL.iter().map(|z| z.code()).collect::<Vec<_>>(),
         "pass_marks": {
             "global_mean_c": climate::check::PASS_GLOBAL_MEAN_C,

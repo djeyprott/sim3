@@ -96,6 +96,35 @@ fn present_day_check() {
             if c.pass { "pass" } else { "MISS" }
         );
     }
+    let v = climate::check::variability_scores(&sim.climate, sim.pinatubo_check()).unwrap();
+    let pf = |b: bool| if b { "pass" } else { "MISS" };
+    println!(
+        "Pinatubo cooling next year: {:.2} °C (observed {:.1}) {}",
+        v.pinatubo_cooling_c.unwrap_or(f64::NAN),
+        v.pinatubo_observed_c,
+        pf(v.pinatubo_pass)
+    );
+    println!(
+        "El Niño size {:.2} °C (observed {:.1}) {}; cycle {:.1} years {}",
+        v.enso_size_c,
+        v.enso_observed_size_c,
+        pf(v.enso_size_pass),
+        v.enso_period_years.unwrap_or(f64::NAN),
+        pf(v.enso_period_pass)
+    );
+    println!(
+        "El Niño months rain: far west {:.0}% {}, east coast {:.0}% {}",
+        v.west_rain_percent.unwrap_or(f64::NAN),
+        pf(v.west_pass),
+        v.east_rain_percent.unwrap_or(f64::NAN),
+        pf(v.east_pass)
+    );
+    for b in &sim.climate.enso.basins {
+        println!(
+            "El Niño basin {:.0}..{:.0}°E, {:.0} km",
+            b.west_lon, b.east_lon, b.width_km
+        );
+    }
     if let Some(op) = world.data.observed_precipitation.as_ref() {
         let r = climate::check::rain_scores(
             &sim.climate,

@@ -17,12 +17,15 @@
 //! Winds and rain (Step 3) come from `atmosphere.rs`; soil water and
 //! lying snow (kept as water until it melts) are tracked here.
 //!
-//! Not yet included, and added in later steps: ocean currents and proper sea ice (Step 4), random variability
-//! (Step 5), changing ice sheets and sea level (Step 6).
+//! Ocean currents and sea ice (Step 4) are in `ocean.rs` and below; eruptions and the El Niño-like
+//! cycle (Step 5) in `variability.rs`. Not yet included: changing ice sheets and sea level (Step 6).
 
 use crate::atmosphere::{Atmosphere, AtmosphereTuning, Table};
 use crate::orbit::{month_days, MonthlySunshine, Orbit, SOLAR_CONSTANT};
 use crate::solver::{Solver, TRANSPORT_LEVEL};
+use crate::variability::{
+    Enso, EnsoEvent, Eruption, EruptionStats, Rng, Volcanism, ENSO_LAT_WIDTH_DEG,
+};
 use world::data::Epoch;
 use world::grid::{to_lat_lon, Grid, EARTH_RADIUS_M};
 
@@ -216,6 +219,9 @@ fn positive_degrees(t: f64) -> f64 {
         + 0.5 * t * erfc(-t / (s * std::f64::consts::SQRT_2))
 }
 
+/// A place and its rain as a share of normal: (lat, lon, %).
+pub type RainPlace = (f64, f64, f64);
+
 /// What the monthly temperature step needs to know about a climate cell
 /// that doesn't change during a run, packed together so the step reads one
 /// record per cell instead of many separate lists.
@@ -231,6 +237,7 @@ struct CellFacts {
     shares: [f64; 3],
 }
 
+#[derive(Clone)]
 pub struct Climate {
     tuning: Tuning,
     n: usize,
@@ -276,6 +283,37 @@ pub struct Climate {
     height: Vec<f64>,
     pub atmosphere: Atmosphere,
     pub ocean: crate::ocean::Ocean,
+    /// Year-to-year variability (Step 5): eruptions and the El Niño-like
+    /// cycle, their random numbers, and what they do this month.
+    pub volcanism: Volcanism,
+    pub enso: Enso,
+    rng: Rng,
+    /// Share of sunlight the volcanic veil takes away, per 440 km cell.
+    dimming: Vec<f64>,
+    /// El Niño-like sea surface anomaly, per 440 km cell, °C.
+    enso_offset: Vec<f64>,
+    /// What happened this month, for the event log.
+    pub eruptions: Vec<Eruption>,
+    pub enso_events: Vec<EnsoEvent>,
+    /// The widest basin's anomaly each month since the start, °C.
+    pub enso_history: Vec<f32>,
+    /// Each climate cell's rain this month and the two before, and the
+    /// normal for those months, mm (where strong El Niño years bring
+    /// drought and floods).
+    rain_recent: [Vec<f32>; 3],
+    normal_recent: [Vec<f32>; 3],
+    /// Climate cell centres (lat, lon), degrees.
+    cell_lat_lon: Vec<(f64, f64)>,
+    /// Largest height step from each climate cell to a neighbour, m.
+    relief: Vec<f64>,
+    /// The month (0-11) most recently stepped.
+    pub last_month: usize,
+    /// During the comparison window: the widest basin's monthly anomaly,
+    /// and land rain and its normal at the basin's western and eastern
+    /// ends in El Niño months (anomaly at least +0.5 °C), mm.
+    pub window_enso: Vec<f32>,
+    enso_ends: Option<[Vec<usize>; 2]>,
+    window_enso_rain: [[f64; 2]; 2],
     /// Air temperature per 440 km cell (sea-level equivalent), °C, and the
     /// open sea's mixed-layer temperature there, °C.
     pub air: Vec<f64>,
@@ -405,6 +443,34 @@ impl Climate {
             t_seaice: t_start.clone(),
             last_passes: 0,
             ocean,
+            volcanism: Volcanism::new(None, Vec::new()),
+            enso: Enso::default(),
+            rng: Rng::new(0),
+            dimming: vec![0.0; nc],
+            enso_offset: vec![0.0; nc],
+            eruptions: Vec::new(),
+            enso_events: Vec::new(),
+            enso_history: Vec::new(),
+            rain_recent: [vec![0.0; n], vec![0.0; n], vec![0.0; n]],
+            normal_recent: [vec![0.0; n], vec![0.0; n], vec![0.0; n]],
+            cell_lat_lon: climate_grid
+                .centers
+                .iter()
+                .map(|&c| to_lat_lon(c))
+                .collect(),
+            window_enso: Vec::new(),
+            enso_ends: None,
+            window_enso_rain: [[0.0; 2]; 2],
+            last_month: 0,
+            relief: (0..n)
+                .map(|i| {
+                    climate_grid
+                        .neighbors(i)
+                        .iter()
+                        .map(|&q| (elev[i] - elev[q as usize]).abs())
+                        .fold(0.0, f64::max)
+                })
+                .collect(),
             overturning_heat: vec![0.0; n],
             fresh_m: vec![0.0; n],
             pt_factor: Table::new(priestley_taylor_factor),
@@ -491,6 +557,136 @@ impl Climate {
 
     /// Share of the cell that is open sea or sea ice (not land, not an ice
     /// sheet).
+    /// This month's eruptions and El Niño-like cycle: the veil's dimming and
+    /// the sea surface anomaly, laid on before the temperatures are solved.
+    fn variability_month(&mut self) {
+        let lat_lon = &self.cell_lat_lon;
+        self.eruptions = self.volcanism.draw(&mut self.rng, |c| lat_lon[c as usize]);
+        self.volcanism.step();
+        self.enso_events = self.enso.step(&mut self.rng);
+        if let Some(b) = self.enso.main_basin() {
+            self.enso_history.push(self.enso.basins[b].t as f32);
+        }
+        for p in 0..self.dimming.len() {
+            let (lat, lon) = self.atmosphere.lat_lon(p);
+            self.dimming[p] = self.volcanism.dimming(lat);
+            self.enso_offset[p] = self.enso.anomaly(lat, lon);
+            self.sea_t[p] += self.enso_offset[p];
+        }
+    }
+
+    /// Comparison-window record of the El Niño-like cycle and its rain.
+    fn window_enso_month(&mut self, month: usize) {
+        let Some(b) = self.enso.main_basin() else {
+            return;
+        };
+        let t = self.enso.basins[b].t;
+        self.window_enso.push(t as f32);
+        if self.enso_ends.is_none() {
+            // Land within one anomaly width (latitude and longitude) of the
+            // basin's western and eastern ends on the equator.
+            let (w, e) = (self.enso.basins[b].west_lon, self.enso.basins[b].east_lon);
+            let near = |lon: f64, end: f64, west: bool| {
+                let d = (lon - end + 540.0).rem_euclid(360.0) - 180.0;
+                if west {
+                    (-ENSO_LAT_WIDTH_DEG..=0.0).contains(&d)
+                } else {
+                    (0.0..=ENSO_LAT_WIDTH_DEG).contains(&d)
+                }
+            };
+            let pick = |west: bool, end: f64| -> Vec<usize> {
+                (0..self.n)
+                    .filter(|&i| {
+                        let (lat, lon) = self.cell_lat_lon[i];
+                        self.land[i] >= 0.5
+                            && lat.abs() <= ENSO_LAT_WIDTH_DEG
+                            && near(lon, end, west)
+                    })
+                    .collect()
+            };
+            self.enso_ends = Some([pick(true, w), pick(false, e)]);
+        }
+        if t >= 0.5 {
+            let ends = self.enso_ends.as_ref().unwrap();
+            for k in 0..2 {
+                for &i in &ends[k] {
+                    self.window_enso_rain[k][0] += self.area[i] * self.precip_mm[i];
+                    self.window_enso_rain[k][1] += self.area[i] * self.normal_p[i][month] as f64;
+                }
+            }
+        }
+    }
+
+    /// Rain on land at the widest basin's western and eastern ends in El
+    /// Niño months, % of normal (None without data).
+    pub fn window_enso_rain_percent(&self) -> Option<[f64; 2]> {
+        let r = self.window_enso_rain;
+        if r[0][1] <= 0.0 || r[1][1] <= 0.0 {
+            return None;
+        }
+        Some([100.0 * r[0][0] / r[0][1], 100.0 * r[1][0] / r[1][1]])
+    }
+
+    /// The world's average surface temperature right now, °C.
+    pub fn global_mean_now(&self) -> f64 {
+        let total: f64 = self.area.iter().sum();
+        (0..self.n)
+            .map(|i| (self.t[i] - LAPSE_RATE * self.height[i]) * self.area[i])
+            .sum::<f64>()
+            / total
+    }
+
+    /// Where the last three months' rain on land fell furthest below and
+    /// above normal, in mm: ((lat, lon, % of normal), (lat, lon, % of
+    /// normal)). Only cells that are mostly land count.
+    pub fn rain_extremes(&self) -> Option<(RainPlace, RainPlace)> {
+        let mut dry: Option<(usize, f32)> = None;
+        let mut wet: Option<(usize, f32)> = None;
+        for i in 0..self.n {
+            if self.land[i] < 0.5 {
+                continue;
+            }
+            let r: f32 = (0..3).map(|k| self.rain_recent[k][i]).sum();
+            let nrm: f32 = (0..3).map(|k| self.normal_recent[k][i]).sum();
+            let d = r - nrm;
+            if dry.is_none_or(|(_, v)| d < v) {
+                dry = Some((i, d));
+            }
+            if wet.is_none_or(|(_, v)| d > v) {
+                wet = Some((i, d));
+            }
+        }
+        let place = |i: usize| {
+            let r: f32 = (0..3).map(|k| self.rain_recent[k][i]).sum();
+            let nrm: f32 = (0..3).map(|k| self.normal_recent[k][i]).sum();
+            let (lat, lon) = self.cell_lat_lon[i];
+            (lat, lon, 100.0 * r as f64 / (nrm as f64).max(1.0))
+        };
+        Some((place(dry?.0), place(wet?.0)))
+    }
+
+    /// Turns on year-to-year variability. `eruptions` gives how often and
+    /// how big eruptions are (None: no eruptions); `seed` picks this run's
+    /// random history.
+    pub fn set_variability(&mut self, eruptions: Option<EruptionStats>, seed: u64) {
+        // Eruptions can happen on land, more likely where the ground is
+        // steep: weight = land share × the largest height step to a
+        // neighbouring cell (m). Real volcanoes follow plate edges, which
+        // the terrain alone doesn't give; mountains are the closest proxy.
+        let sites = (0..self.n)
+            .map(|i| {
+                (
+                    i as u32,
+                    self.land[i] * (1.0 - self.ice[i]) * self.relief[i],
+                )
+            })
+            .collect();
+        self.volcanism = Volcanism::new(eruptions, sites);
+        let sea: Vec<f64> = (0..self.n).map(|i| self.sea_share(i)).collect();
+        self.enso = Enso::new(&self.ocean.equator_wet(&sea));
+        self.rng = Rng::new(seed);
+    }
+
     fn sea_share(&self, i: usize) -> f64 {
         (1.0 - self.land[i]) * (1.0 - self.ice[i])
     }
@@ -551,7 +747,7 @@ impl Climate {
             let f = self.facts[i];
             let p = f.parent as usize;
             let w = f.weight;
-            let sun = sun_month[f.sun_row as usize];
+            let sun = sun_month[f.sun_row as usize] * (1.0 - self.dimming[f.parent as usize]);
             let iced = self.sea_ice_m[i] > 0.0;
             let (air_p, eps_p, speed_p) = (self.air[p], eps[p], speed[p]);
             for k in 0..3 {
@@ -852,6 +1048,8 @@ impl Climate {
     pub fn step_month(&mut self, year: i64, month: usize, days: u32, co2_ppm: f64) {
         let dt = days as f64 * 86_400.0;
         let clock = std::time::Instant::now();
+        self.last_month = month;
+        self.variability_month();
         // Winds from last month's air temperatures.
         let air = std::mem::take(&mut self.air);
         self.atmosphere.update_winds(month, &air);
@@ -866,6 +1064,19 @@ impl Climate {
         let clock = std::time::Instant::now();
         self.water_month(month, dt, days);
         self.timing[2] += clock.elapsed().as_secs_f64();
+        // The El Niño-like anomaly was laid on the sea for this month only.
+        for p in 0..self.sea_t.len() {
+            self.sea_t[p] -= self.enso_offset[p];
+        }
+        self.rain_recent.rotate_left(1);
+        self.normal_recent.rotate_left(1);
+        for i in 0..self.n {
+            self.rain_recent[2][i] = self.precip_mm[i] as f32;
+            self.normal_recent[2][i] = self.normal_p[i][month];
+        }
+        if self.window.is_some_and(|(a, b)| (a..=b).contains(&year)) {
+            self.window_enso_month(month);
+        }
 
         for i in 0..self.n {
             self.this_year[i][month] = self.t[i] as f32;

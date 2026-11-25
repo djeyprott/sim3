@@ -71,6 +71,7 @@ pub const GYRE_DEPTH_M: f64 = 1000.0;
 const N_LON: usize = 360;
 const N_LAT: usize = 180;
 
+#[derive(Clone)]
 pub struct Ocean {
     /// Level-4 cells: per neighbour entry, water flowing out across that
     /// edge, m³/s (negative = flowing in).
@@ -119,6 +120,7 @@ pub struct Ocean {
 /// stretch of longitude) and a warm box (the sea between 40° S and 40° N
 /// in the same longitudes, which supplies the warm water: the Atlantic
 /// overturning draws on the South Atlantic too).
+#[derive(Clone)]
 pub struct Basin {
     pub name_lat_lon: (f64, f64),
     pub cold: Vec<u32>,
@@ -387,6 +389,22 @@ impl Ocean {
             }
             self.upwelling[p] = (out / self.area[p]).max(0.0);
         }
+    }
+
+    /// Whether the equator is sea at each 1° of longitude, from -179.5°
+    /// east: sea at both 0.5°N and 0.5°S.
+    pub fn equator_wet(&self, sea: &[f64]) -> Vec<bool> {
+        let wet = |lat: f64, lon: f64| {
+            let r = ((89.5 - lat).round() as usize).min(N_LAT - 1);
+            let c = ((lon + 179.5).round().rem_euclid(N_LON as f64)) as usize % N_LON;
+            sea[self.raster_fine[r * N_LON + c] as usize] >= 0.5
+        };
+        (0..N_LON)
+            .map(|c| {
+                let lon = -179.5 + c as f64;
+                wet(0.5, lon) && wet(-0.5, lon)
+            })
+            .collect()
     }
 
     /// Finds the overturning basins from the sea pattern (each stretch of

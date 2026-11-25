@@ -64,6 +64,15 @@ pub struct WorldData {
     pub co2_record: Vec<(f32, f32)>,
     pub co2_1981_2010_ppm: Option<f32>,
     pub orbit: Vec<OrbitRow>,
+    /// Recorded eruptions, used only for how often and how big eruptions
+    /// are: sulfur injected into the stratosphere by each (Tg S), and the
+    /// length of the record in years (HolVol v1.1, 9500-500 BCE).
+    pub eruptions: Option<EruptionRecord>,
+}
+
+pub struct EruptionRecord {
+    pub sizes_tgs: Vec<f32>,
+    pub span_years: f32,
 }
 
 #[derive(Debug)]
@@ -168,6 +177,7 @@ impl WorldData {
             co2_record: Vec::new(),
             co2_1981_2010_ppm: None,
             orbit: Vec::new(),
+            eruptions: None,
         };
         while r.pos < bytes.len() {
             let tag: [u8; 4] = r.take(4)?.try_into().unwrap();
@@ -217,6 +227,15 @@ impl WorldData {
                             obliquity_deg: q[3],
                         })
                         .collect();
+                }
+                b"VOLC" => {
+                    let n = s.u32()? as usize;
+                    let span_years = s.f32s(1)?[0];
+                    let sizes_tgs = s.f32s(n)?;
+                    out.eruptions = Some(EruptionRecord {
+                        sizes_tgs,
+                        span_years,
+                    });
                 }
                 _ => {} // unknown sections are skipped, so older programs can read newer files
             }

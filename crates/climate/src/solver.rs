@@ -13,6 +13,7 @@ use world::grid::{parent_map, Grid, EARTH_RADIUS_M};
 /// Geodesic level on which transport is solved (2,562 cells, ~440 km).
 pub const TRANSPORT_LEVEL: u32 = 4;
 
+#[derive(Clone)]
 pub struct Solver {
     offsets: Vec<u32>,
     nbrs: Vec<u32>,

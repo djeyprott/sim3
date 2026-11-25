@@ -17,7 +17,26 @@ const SPEED_NAMES = {
 // How each kind of event reads in the chronicle. Later phases add many more.
 const EVENT_TEXT = {
   simulation_started: () => "The simulation began.",
+  volcanic_eruption: (e) => `A great volcanic eruption near ${place(e.lat, e.lon)} threw ${fmtTg(e.sulfur_tg)} of sulfur ` +
+    `into the stratosphere; its haze will dim the sun for about two years.`,
+  world_cooled: (e) => `The world was ${e.cooling_c.toFixed(1)} °C colder than usual this year, under the eruption's haze.`,
+  el_nino: (e) => ensoText("El Niño", "warmed", e),
+  la_nina: (e) => ensoText("La Niña", "cooled", e),
 };
+
+function place(lat, lon) {
+  return `${Math.abs(lat).toFixed(0)}°${lat < 0 ? "S" : "N"} ${Math.abs(lon).toFixed(0)}°${lon < 0 ? "W" : "E"}`;
+}
+
+function fmtTg(tg) {
+  return `${tg >= 10 ? Math.round(tg) : tg.toFixed(1)} million tonnes`;
+}
+
+function ensoText(name, verb, e) {
+  return `A strong ${name}: the eastern equatorial sea ${verb} by ${Math.abs(e.strength_c).toFixed(1)} °C. ` +
+    `Over three months rain fell to ${Math.round(e.dry_percent)}% of normal near ${place(e.dry_lat, e.dry_lon)} ` +
+    `and rose to ${Math.round(e.wet_percent)}% near ${place(e.wet_lat, e.wet_lon)}.`;
+}
 
 async function api(path, body) {
   const opts = body
@@ -184,7 +203,10 @@ function lineChart({ series, xLabels, xTicks, width = 340, height = 170, yUnit =
     out += `<line x1="${pad.l}" x2="${width - pad.r}" y1="${Y(y)}" y2="${Y(y)}" stroke="#3a342a" stroke-width="1"/>`;
     out += `<text x="${pad.l - 4}" y="${Y(y) + 3}" text-anchor="end">${y}${y === hi ? " " + yUnit : ""}</text>`;
   }
-  for (const [x, label] of xTicks) out += `<text x="${X(x)}" y="${height - 6}" text-anchor="middle">${label}</text>`;
+  xTicks.forEach(([x, label], k) => {
+    const anchor = xTicks.length > 1 && k === 0 ? "start" : xTicks.length > 1 && k === xTicks.length - 1 ? "end" : "middle";
+    out += `<text x="${X(x)}" y="${height - 6}" text-anchor="${anchor}">${label}</text>`;
+  });
   for (const s of series) {
     const pts = s.values.filter((p) => Number.isFinite(p[1])).map((p) => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ");
     out += `<polyline fill="none" stroke="${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ""} points="${pts}"/>`;
@@ -266,7 +288,27 @@ async function refreshWorldChart() {
   const ticks = pts.length ? [[pts[0][0], yr(pts[0][0])], [pts[pts.length - 1][0], yr(pts[pts.length - 1][0])]] : [];
   $("world-chart").innerHTML = `<div class="head"><strong>World average temperature</strong></div>` +
     `<div class="coords">Yearly average of the whole surface, land and sea</div>` +
-    lineChart({ series: [{ values: pts, color: "#d9a441" }], xTicks: ticks, width: 400, height: 160 });
+    lineChart({ series: [{ values: pts, color: "#d9a441" }], xTicks: ticks, width: 400, height: 160 }) +
+    ensoChartHtml(d, yr);
+}
+
+// The El Niño-like cycle in the widest equatorial ocean, month by month.
+function ensoChartHtml(d, yr) {
+  const e = d.enso;
+  if (!e || e.length < 2 || !d.enso_basin) return "";
+  const [w, east, km] = d.enso_basin;
+  const lon = (x) => { const v = ((x + 540) % 360) - 180; return `${Math.abs(Math.round(v))}°${v < 0 ? "W" : "E"}`; };
+  const strong = d.enso_strong_c;
+  const ticks = [[e[0][0], yr(e[0][0])], [e[e.length - 1][0], yr(e[e.length - 1][0])]];
+  const line = (v, dash) => ({ values: [[e[0][0], v], [e[e.length - 1][0], v]], color: "#5a5245", dash });
+  return `<div class="head" style="margin-top:10px"><strong>El Niño and La Niña</strong></div>` +
+    `<div class="coords">Sea surface in the east of the widest equatorial ocean (${lon(w)} to ${lon(east)}, ` +
+    `${Math.round(km).toLocaleString()} km), compared with normal, month by month. Above +${strong} °C is a strong El Niño, ` +
+    `below −${strong} °C a strong La Niña.</div>` +
+    lineChart({
+      series: [line(strong, true), line(-strong, true), { values: e, color: "#6fb3c8" }],
+      xTicks: ticks, width: 400, height: 140,
+    });
 }
 
 function checkHtml(d) {
@@ -287,7 +329,7 @@ function checkHtml(d) {
     row(`Typical land error, summer–winter swing (mark ${pm.seasonal_swing_error_c} °C)`, `${s.seasonal_swing_error_c.toFixed(1)} °C`,
       s.pass_seasonal) +
     row("Land on average too warm (+) or cold (−)", `${s.land_bias_c >= 0 ? "+" : "−"}${Math.abs(s.land_bias_c).toFixed(1)} °C`) +
-    `</table>` + rainCheckHtml(d) + oceanCheckHtml(d) +
+    `</table>` + rainCheckHtml(d) + oceanCheckHtml(d) + variabilityCheckHtml(d) +
     `<p class="note">Compare maps with each layer's "Observed" and "Model − observed" views.</p>`;
 }
 
@@ -330,6 +372,24 @@ function oceanCheckHtml(d) {
   return out + `</table>`;
 }
 
+function variabilityCheckHtml(d) {
+  const v = d.variability;
+  if (!v) return "";
+  const row = (label, value, ok) => `<tr><td>${label}</td><td class="num">${value}</td>` +
+    `<td class="num ${ok ? "pass" : "fail"}">${ok ? "pass" : "miss"}</td></tr>`;
+  const pct = (x) => (x == null ? "–" : `${Math.round(x)}%`);
+  return `<h3>Eruptions and El Niño</h3><table>` +
+    row(`World cooling the year after a Pinatubo-sized eruption (observed about ${v.pinatubo_observed_c} °C)`,
+      v.pinatubo_cooling_c == null ? "–" : `${v.pinatubo_cooling_c.toFixed(2)} °C`, v.pinatubo_pass) +
+    row(`El Niño's typical size (observed ${v.enso_observed_size_c} °C, within 50%)`, `${v.enso_size_c.toFixed(2)} °C`,
+      v.enso_size_pass) +
+    row("El Niño cycle length (2–7 years)", v.enso_period_years == null ? "–" : `${v.enso_period_years.toFixed(1)} years`,
+      v.enso_period_pass) +
+    row("Rain in El Niño months, far west of the ocean (observed: drier)", pct(v.west_rain_percent), v.west_pass) +
+    row("Rain in El Niño months, its eastern coast (observed: wetter)", pct(v.east_rain_percent), v.east_pass) +
+    `</table>`;
+}
+
 async function refreshCheck() {
   const box = $("check");
   if (!state || state.scenario !== "present_day_check") { box.hidden = true; return; }
@@ -339,13 +399,13 @@ async function refreshCheck() {
 
 // The climate layers and what each can show.
 const FIELDS = {
-  temperature: { views: ["current", "normal", "observed", "difference"] },
-  rain: { views: ["current", "normal", "observed", "difference"] },
+  temperature: { views: ["current", "anomaly", "normal", "observed", "difference"] },
+  rain: { views: ["current", "anomaly", "normal", "observed", "difference"] },
   snow: { views: ["current", "normal"] },
   seaice: { views: ["current"] },
   zone: { views: ["normal", "observed"] },
 };
-const VIEW_LABELS = { current: "This month", normal: "Recent average", observed: "Observed", difference: "Model − observed" };
+const VIEW_LABELS = { current: "This month", anomaly: "This month vs normal", normal: "Recent average", observed: "Observed", difference: "Model − observed" };
 const temp = { view: "normal", month: null };
 let lastTempTick = -1;
 
@@ -360,7 +420,7 @@ function tempOptions(map) {
     .map((id) => ({ id, label: map.layer() === "zone" && id === "normal" ? "Model" : VIEW_LABELS[id] }));
   if (!views.some((v) => v.id === temp.view)) temp.view = "normal";
   optionButtons(box, views, temp.view, (id) => { temp.view = id; tempOptions(map); refreshTemperature(map, true); });
-  if (temp.view !== "current" && map.layer() !== "zone") {
+  if (!["current", "anomaly"].includes(temp.view) && map.layer() !== "zone") {
     const sel = document.createElement("select");
     sel.innerHTML = `<option value="">Whole year</option>` + MONTH_NAMES.map((m, i) => `<option value="${i}">${m}</option>`).join("");
     sel.value = temp.month ?? "";
@@ -375,26 +435,29 @@ async function refreshTemperature(map, force) {
   const fixed = temp.view === "observed";
   if (!force && (fixed || state.tick === lastTempTick)) return;
   lastTempTick = state.tick;
-  const month = layer !== "zone" && temp.view !== "current" ? temp.month : null;
+  const thisMonth = ["current", "anomaly"].includes(temp.view);
+  const month = layer !== "zone" && !thisMonth ? temp.month : null;
   const q = `/api/climate/map?field=${layer}&view=${temp.view}${month !== null ? `&month=${month}` : ""}`;
   const buf = await fetch(q).then((r) => r.arrayBuffer());
   if (map.layer() !== layer) return;
-  const when = temp.view === "current" ? state.date_label.replace(/^\d+ /, "")
+  const when = thisMonth ? state.date_label.replace(/^\d+ /, "")
     : month === null ? "whole year" : MONTH_NAMES[month];
   const recent = state.scenario === "present_day_check" ? "1981–2010" : "recent years";
   let mode, title;
   if (layer === "temperature") {
-    mode = temp.view === "difference" ? "diff" : "temp";
+    mode = { difference: "diff", anomaly: "anom" }[temp.view] ?? "temp";
     title = {
       current: `Temperature, ${when} (°C)`,
+      anomaly: `Temperature, ${when}, minus the recent average for the month (°C)`,
       normal: `Average temperature, ${when}, recent years (°C)`,
       observed: `Observed average, ${when}, 1981–2010 (°C)`,
       difference: `Model minus observed, ${when} (°C)`,
     }[temp.view];
   } else if (layer === "rain") {
-    mode = temp.view === "difference" ? "ratio" : "rain";
+    mode = ["difference", "anomaly"].includes(temp.view) ? "ratio" : "rain";
     title = {
       current: `Rain and snow, ${when} (mm)`,
+      anomaly: `Rain and snow, ${when}, as a multiple of the recent average for the month`,
       normal: `Rain and snow, ${when}, recent years (mm)`,
       observed: `Observed rain and snow, ${when}, 1981–2010 (mm)`,
       difference: `Model rain as a multiple of observed, ${when}`,

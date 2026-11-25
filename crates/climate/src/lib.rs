@@ -13,6 +13,7 @@ pub mod model;
 pub mod ocean;
 pub mod orbit;
 pub mod solver;
+pub mod variability;
 
 pub use atmosphere::{AtmosphereTuning, ATMOSPHERE_TUNED};
 pub use model::{Climate, Tuning, TUNED};

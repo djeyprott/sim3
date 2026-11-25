@@ -389,3 +389,67 @@ pub fn ocean_scores(
     }
     Some(OceanScores { sea_ice, contrasts })
 }
+
+// ---------------------------------------------------------------------------
+// Step 5: eruptions and the El Niño-like cycle.
+
+/// Observed global cooling in the year after Pinatubo (mid-1991): about
+/// 0.4 °C at its largest in 1992 (Parker et al. 1996; Hansen et al. 1996);
+/// the agreed pass range.
+pub const PINATUBO_OBSERVED_C: f64 = 0.4;
+pub const PASS_PINATUBO_C: (f64, f64) = (0.3, 0.5);
+/// El Niño's rhythm: a cycle of 2-7 years (the agreed range; observed peak
+/// 3-5 years) and a typical size within 50% of the observed 0.9 °C.
+pub const PASS_ENSO_PERIOD_YEARS: (f64, f64) = (2.0, 7.0);
+pub const PASS_ENSO_SIZE_RELATIVE: f64 = 0.5;
+
+#[derive(Serialize, Clone, Debug)]
+pub struct VariabilityScores {
+    pub pinatubo_cooling_c: Option<f64>,
+    pub pinatubo_observed_c: f64,
+    pub pinatubo_pass: bool,
+    pub enso_size_c: f64,
+    pub enso_observed_size_c: f64,
+    pub enso_size_pass: bool,
+    pub enso_period_years: Option<f64>,
+    pub enso_period_pass: bool,
+    /// Rain in El Niño months, % of normal, at the far west of the basin
+    /// (observed: drier) and on its eastern coast (observed: wetter).
+    pub west_rain_percent: Option<f64>,
+    pub west_pass: bool,
+    pub east_rain_percent: Option<f64>,
+    pub east_pass: bool,
+}
+
+/// Scores for the comparison window. `pinatubo_cooling_c` comes from a
+/// twin run with and without a Pinatubo-sized eruption.
+pub fn variability_scores(
+    climate: &Climate,
+    pinatubo_cooling_c: Option<f64>,
+) -> Option<VariabilityScores> {
+    let s: Vec<f64> = climate.window_enso.iter().map(|&v| v as f64).collect();
+    if s.len() < 120 {
+        return None;
+    }
+    let mean = s.iter().sum::<f64>() / s.len() as f64;
+    let size = (s.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / s.len() as f64).sqrt();
+    let observed = crate::variability::ENSO_REFERENCE_SIZE_C;
+    let period = crate::variability::period_months(&s).map(|m| m / 12.0);
+    let rain = climate.window_enso_rain_percent();
+    let (lo, hi) = PASS_PINATUBO_C;
+    Some(VariabilityScores {
+        pinatubo_cooling_c,
+        pinatubo_observed_c: PINATUBO_OBSERVED_C,
+        pinatubo_pass: pinatubo_cooling_c.is_some_and(|c| (lo..=hi).contains(&c)),
+        enso_size_c: size,
+        enso_observed_size_c: observed,
+        enso_size_pass: (size - observed).abs() <= PASS_ENSO_SIZE_RELATIVE * observed,
+        enso_period_years: period,
+        enso_period_pass: period
+            .is_some_and(|p| (PASS_ENSO_PERIOD_YEARS.0..=PASS_ENSO_PERIOD_YEARS.1).contains(&p)),
+        west_rain_percent: rain.map(|r| r[0]),
+        west_pass: rain.is_some_and(|r| r[0] < 100.0),
+        east_rain_percent: rain.map(|r| r[1]),
+        east_pass: rain.is_some_and(|r| r[1] > 100.0),
+    })
+}
